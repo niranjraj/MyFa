@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.1
+- Starting MyFA Desk while it's already running now checks the running copy:
+  - **Same version, answering:** it just opens its dashboard. Only one copy ever runs.
+  - **Older version:** it asks the old copy to quit and starts the new one.
+  - **Frozen (port taken, no answer):** it stops that copy (only the one MyFA recorded) and starts fresh.
+  - **Port taken by a different program:** it leaves that program alone and opens a page explaining what to do.
+- On Windows the dashboard's port is now held exclusively, so a second copy can't share it by accident.
+
 ## 1.5.0
 - The Guide can now use your Claude plan instead of API credit, in two ways:
   - **Claude Code (one click):** if Claude Code is installed on your PC and logged in with your Claude account, **Fetch guide** runs it in the background with web search. It counts against your plan's usage, not API credit.

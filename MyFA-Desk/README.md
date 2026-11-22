@@ -139,6 +139,16 @@ The top of the dashboard is MyFA Desk's control panel:
 
 The page is only reachable from your own PC. If port 47800 is taken, set `"port"` in `config.json`.
 
+## Stopping and restarting
+
+- **Stop:** press **Quit** in the top bar. Closing the browser tab doesn't stop Desk; it keeps watching in the background.
+- **Tab closed?** Double-click MyFA Desk again. It finds the running copy and reopens its dashboard (it never starts a second copy), then press **Quit**.
+- **Restarting is automatic when needed.** If the running copy is an older version, starting MyFA Desk replaces it. If it has frozen, starting MyFA Desk stops it and starts fresh.
+- **Last resort:** Task Manager (Ctrl+Shift+Esc), find **Python** / **pythonw.exe**, **End task**.
+- In terminal mode (`run_desk.bat`), press Ctrl+C or close the window.
+
+Desk doesn't start with Windows; it runs only after you double-click it, and stops when you shut down.
+
 ## Updates
 
 Desk checks [github.com/niranjraj/MyFa](https://github.com/niranjraj/MyFa/releases) for a new release each time it starts. When there is one, it asks, then updates itself and the MyFA addon in your `_forever_` folder; type `/reload` in game afterwards. Your `config.json`, price history, Targets.lua and any edits to `raids.json` are kept. If you edited `raids.json`, the new one is saved as `raids.new.json` next to it.

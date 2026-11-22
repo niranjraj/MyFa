@@ -494,12 +494,90 @@ def page(app: Desk):
     return SETUP_HTML.replace("__CONTROL__", CONTROL_HTML.replace("__TS__", "0").replace("__PORT__", str(app.port)))
 
 
-def already_running(port):
+PID_PATH = desk.DATA_DIR / "app.pid"
+ERROR_PAGE = desk.DATA_DIR / "startup-error.html"
+
+
+def running_status(port):
+    """The running copy's status, or None if nothing answers."""
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=2) as r:
-            return r.status == 200
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=3) as r:
+            return json.loads(r.read())
+    except Exception:
+        return None
+
+
+def ask_to_quit(port):
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/quit", data=b"{}", method="POST",
+                                     headers={"X-MyFA": "1", "Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=3).read()
+        return True
     except Exception:
         return False
+
+
+def kill_old(pid):
+    """Stop a frozen copy of MyFA Desk (only the process recorded in data/app.pid)."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            import signal
+            os.kill(pid, signal.SIGTERM)
+        return True
+    except Exception:
+        return False
+
+
+class DeskServer(ThreadingHTTPServer):
+    """Owns its port exclusively, so a second MyFA Desk can never share it.
+    On Windows SO_REUSEADDR would let two programs bind the same port, so use SO_EXCLUSIVEADDRUSE there;
+    elsewhere SO_REUSEADDR only skips the TIME_WAIT delay after a restart."""
+    allow_reuse_address = os.name != "nt"
+    daemon_threads = True
+
+    def server_bind(self):
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+def port_free(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            elif os.name != "nt":
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def wait_port_free(port, seconds):
+    end = time.time() + seconds
+    while time.time() < end:
+        if port_free(port):
+            return True
+        time.sleep(0.4)
+    return port_free(port)
+
+
+def show_startup_error(port, detail):
+    """No terminal in app mode, so explain the problem in the browser."""
+    desk.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    ERROR_PAGE.write_text(f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>MyFA Desk couldn't start</title>
+<style>body{{background:#0b0d0f;color:#ebe6da;font:15px/1.6 "Segoe UI",system-ui,sans-serif;max-width:640px;margin:12vh auto;padding:0 24px}}
+h1{{font-size:22px}} code{{color:#e3bd62}} p{{color:#a29d91}} b{{color:#ebe6da}}</style></head><body>
+<h1>MyFA Desk couldn't start</h1>
+<p>Something else on this PC is using port <code>{port}</code>, and it isn't a MyFA Desk that answers.</p>
+<p><b>Try this:</b> restart your PC, then double-click MyFA Desk again. If it keeps happening, open
+<code>config.json</code> in the MyFA-Desk folder and set <code>"port": {port + 1}</code>.</p>
+<p>Details: {html.escape(detail)}</p></body></html>""", encoding="utf-8")
+    webbrowser.open(ERROR_PAGE.as_uri())
 
 
 def main(argv=None):
@@ -527,19 +605,46 @@ def main(argv=None):
     app = Desk(port)
     server = None
     deadline = time.time() + (20 if "--restart" in argv else 0)
+    mine = updater.local_version()
     while server is None:
         try:
-            server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))
+            server = DeskServer(("127.0.0.1", port), make_handler(app))
+            break
         except OSError:
             if time.time() < deadline:
                 time.sleep(0.5)
                 continue
-            if already_running(port):
-                if not no_browser:
-                    webbrowser.open(url)
-                return
-            raise
+        # the port is taken: is it MyFA Desk, and is it this version?
+        status = running_status(port)
+        if status and status.get("version") == mine:
+            if not no_browser:
+                webbrowser.open(url)          # already running and up to date: just show it
+            return
+        if status:
+            log(f"Replacing MyFA Desk {status.get('version')} with {mine}.")
+            ask_to_quit(port)
+        else:
+            try:
+                pid = int(PID_PATH.read_text().strip())
+            except (OSError, ValueError):
+                pid = None
+            if pid and pid != os.getpid():
+                log("The running MyFA Desk isn't answering. Restarting it.")
+                kill_old(pid)
+        if not wait_port_free(port, 12):
+            show_startup_error(port, "the port is still in use after trying to stop the old copy")
+            return
+        try:
+            server = DeskServer(("127.0.0.1", port), make_handler(app))
+        except OSError as e:
+            show_startup_error(port, str(e))
+            return
     app.server = server
+    try:
+        desk.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        PID_PATH.write_text(str(os.getpid()))
+    except OSError:
+        pass
     updater.remember_shipped_raids()
     log(f"MyFA Desk {updater.local_version()} running at {url}")
     threading.Thread(target=app.watch, daemon=True).start()
@@ -551,6 +656,11 @@ def main(argv=None):
     finally:
         server.server_close()
         app.stop.set()
+        try:
+            if PID_PATH.exists() and PID_PATH.read_text().strip() == str(os.getpid()):
+                PID_PATH.unlink()
+        except OSError:
+            pass
         if app.restart_after_stop:
             pyw = Path(sys.executable)
             exe = pyw.with_name("pythonw.exe") if os.name == "nt" and pyw.with_name("pythonw.exe").exists() else pyw
