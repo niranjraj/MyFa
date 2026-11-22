@@ -227,7 +227,8 @@ class Desk:
                 "auto_update": self.cfg.get("auto_update", "ask"),
             },
             "windows": os.name == "nt",
-            "guide": dict(self.guide, has_key=bool(guide_mod.api_key(self.cfg))),
+            "guide": dict(self.guide, has_key=bool(guide_mod.api_key(self.cfg)), provider=guide_mod.provider(self.cfg),
+                          claude_code=bool(guide_mod.find_claude_cli(self.cfg)), source=self.cfg.get("guide_source", "auto")),
         }
 
     def save_settings(self, data):
@@ -255,7 +256,9 @@ class Desk:
             cfg["desktop_notifications"] = bool(data["desktop_notifications"])
         if data.get("auto_update") in ("ask", "always", "never"):
             cfg["auto_update"] = data["auto_update"]
-        if "anthropic_api_key" in data:
+        if data.get("guide_source") in ("auto", "claude_code", "chat", "api"):
+            cfg["guide_source"] = data["guide_source"]
+        if "anthropic_api_key" in data and data["anthropic_api_key"] != "__keep__":
             key = (data.get("anthropic_api_key") or "").strip()
             if key and not key.startswith("sk-"):
                 errors.append("That doesn't look like a Claude API key (they start with sk-).")
@@ -334,21 +337,38 @@ class Desk:
             return {"ok": True}
         if not self.result:
             return {"error": "No scan loaded yet. Do a scan first."}
-        if not guide_mod.api_key(self.cfg):
-            return {"error": "Add your Claude API key first."}
+        how = guide_mod.provider(self.cfg)
+        if how == "chat":
+            return {"error": "Use the Claude chat steps: copy the request, ask Claude, paste the answer back."}
         self.guide.update(busy=True, error=None, started=time.time())
 
         def run():
-            log("Researching your guide with Claude (web search)... this takes about a minute.")
-            out = guide_mod.fetch_guide(self.cfg, self.result)
+            log("Researching your guide with " + ("Claude Code (your Claude plan)" if how == "claude_code" else "the Claude API")
+                + " and web search... this takes a few minutes.")
+            out = guide_mod.fetch(self.cfg, self.result)
             if out.get("error"):
                 self.guide.update(busy=False, error=out["error"])
                 log(f"Guide: {out['error']}")
             else:
                 self.guide.update(busy=False, error=None)
-                log(f"Guide ready ({out.get('searches', 0)} web searches).")
+                log(f"Guide ready (via {out.get('via', 'Claude')}).")
                 self.reprocess.set()
         threading.Thread(target=run, daemon=True).start()
+        return {"ok": True}
+
+    def guide_prompt(self):
+        if not self.result:
+            return {"error": "No scan loaded yet. Do a scan first."}
+        return {"prompt": guide_mod.chat_prompt(self.result)}
+
+    def guide_paste(self, data):
+        if not self.result:
+            return {"error": "No scan loaded yet. Do a scan first."}
+        out = guide_mod.save_pasted(data.get("text", ""), self.result)
+        if out.get("error"):
+            return out
+        log("Saved Claude's guide from chat.")
+        self.reprocess.set()
         return {"ok": True}
 
     def detect(self):
@@ -406,6 +426,8 @@ def make_handler(app: Desk):
                 return self._send(200, FAVICON, "image/svg+xml")
             if self.path == "/api/status":
                 return self._send(200, json.dumps(app.status()))
+            if self.path == "/api/guide-prompt":
+                return self._send(200, json.dumps(app.guide_prompt()))
             if self.path == "/api/items":
                 return self._send(200, json.dumps(app.item_names()))
             return self._send(404, '{"error":"not found"}')
@@ -439,6 +461,8 @@ def make_handler(app: Desk):
                 return self._send(200, json.dumps(app.add_flip(data)))
             if route == "/api/forget":
                 return self._send(200, json.dumps(app.forget_flip(data)))
+            if route == "/api/guide-paste":
+                return self._send(200, json.dumps(app.guide_paste(data)))
             if route == "/api/guide":
                 return self._send(200, json.dumps(app.start_guide()))
             if route == "/api/detect":
@@ -632,6 +656,20 @@ CONTROL_HTML = r"""
           <label class="check"><input type="checkbox" id="c-notify"> Windows notification when a flip is worth selling</label>
         </div>
         <div class="field">
+          <label for="c-guide">Guide uses</label>
+          <select id="c-guide" style="max-width:360px">
+            <option value="auto">Automatic (Claude Code if installed, otherwise Claude chat)</option>
+            <option value="claude_code">Claude Code on this PC (your Claude plan)</option>
+            <option value="chat">Claude chat, copy and paste (your Claude plan)</option>
+            <option value="api">Claude API key (API credit)</option>
+          </select>
+          <span class="hint" id="c-guide-hint"></span>
+        </div>
+        <div class="field" id="c-key-field">
+          <label for="c-key">Claude API key (only for the API option)</label>
+          <input type="password" id="c-key" autocomplete="off" spellcheck="false" placeholder="sk-ant-...">
+        </div>
+        <div class="field">
           <label for="c-auto">Updates</label>
           <select id="c-auto" style="max-width:260px">
             <option value="ask">Ask me (button turns gold)</option>
@@ -675,6 +713,13 @@ CONTROL_HTML = r"""
     $('c-notify').checked = st.desktop_notifications;
     $('c-notify').closest('.field').hidden = !s.windows;
     $('c-auto').value = st.auto_update;
+    if (s.guide) {
+      $('c-guide').value = s.guide.source || 'auto';
+      $('c-key').placeholder = s.guide.has_key ? 'Saved (type to replace)' : 'sk-ant-...';
+      $('c-guide-hint').textContent = s.guide.claude_code ? 'Claude Code is installed on this PC.'
+        : 'Claude Code not found. Install it and run `claude` once to log in for one-click guides.';
+      $('c-key-field').hidden = $('c-guide').value !== 'api';
+    }
   }
 
   let render = function (s) {
@@ -746,12 +791,13 @@ CONTROL_HTML = r"""
     $('c-saved').textContent = r.ok ? 'Added to desktop' : (r.error || 'Couldn\'t add it');
     $('c-saved').hidden = false; setTimeout(() => $('c-saved').hidden = true, 4000);
   };
-  $('c-form').addEventListener('input', () => { formDirty = true; });
+  $('c-form').addEventListener('input', () => { formDirty = true; $('c-key-field').hidden = $('c-guide').value !== 'api'; });
   $('c-form').onsubmit = async (e) => {
     e.preventDefault();
     const r = await post('/api/settings', {
       wow_path: $('c-wow').value, account: $('c-account').value, ah_cut: $('c-cut').value,
-      desktop_notifications: $('c-notify').checked, auto_update: $('c-auto').value });
+      desktop_notifications: $('c-notify').checked, auto_update: $('c-auto').value,
+      guide_source: $('c-guide').value, anthropic_api_key: $('c-key').value || '__keep__' });
     if (r.ok) { formDirty = false; $('c-errors').hidden = true; $('c-saved').textContent = 'Saved'; $('c-saved').hidden = false;
                 setTimeout(() => $('c-saved').hidden = true, 2500); poll(); }
     else { $('c-errors').textContent = (r.errors || ['Couldn\'t save.']).join(' '); $('c-errors').hidden = false; }
@@ -798,10 +844,30 @@ CONTROL_HTML = r"""
     setTimeout(() => location.reload(), 3500);
   }));
   gFetch = document.getElementById('g-fetch'); gStatus = document.getElementById('g-status');
+  const gCopy = document.getElementById('g-copy');
+  if (gCopy) gCopy.onclick = async () => {
+    const r = await (await fetch('/api/guide-prompt', { cache: 'no-store' })).json();
+    const out = document.getElementById('g-copied');
+    if (r.error) { out.textContent = r.error; return; }
+    try { await navigator.clipboard.writeText(r.prompt); out.textContent = 'Copied. Now open Claude and paste it.'; }
+    catch (e) {
+      const ta = document.getElementById('g-paste'); ta.value = r.prompt; ta.select();
+      out.textContent = 'Copy blocked by the browser: the request is in the box below, press Ctrl+C, then clear the box.';
+    }
+  };
+  const gSave = document.getElementById('g-save');
+  if (gSave) gSave.onclick = async () => {
+    const out = document.getElementById('g-saved');
+    const r = await post('/api/guide-paste', { text: document.getElementById('g-paste').value });
+    out.textContent = r.ok ? 'Saved. Loading your guide…' : (r.error || 'Couldn\'t save it.');
+    out.style.color = r.ok ? '#72d38e' : '#f08c79';
+    if (r.ok) setTimeout(() => location.reload(), 3000);
+  };
   if (gFetch) gFetch.onclick = async () => {
     const r = await post('/api/guide');
     if (r.error) { gStatus.textContent = r.error; return; }
-    gFetch.disabled = true; gFetch.textContent = 'Researching…';
+    gFetch.disabled = true; gFetch.textContent = 'Researching…'; guideWasBusy = true;
+    gStatus.textContent = 'Starting…';
   };
   const gKey = document.getElementById('g-keyform');
   if (gKey) gKey.onsubmit = async (e) => {

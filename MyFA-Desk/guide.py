@@ -5,6 +5,9 @@ import html
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -12,6 +15,116 @@ from pathlib import Path
 
 GUIDE_PATH = Path(__file__).resolve().parent / "data" / "guide.json"
 API_URL = "https://api.anthropic.com/v1/messages"
+
+
+CHAT_URL = "https://claude.ai/new"
+
+
+def find_claude_cli(cfg=None):
+    """Path to the Claude Code program (claude / claude.cmd / claude.exe), or None."""
+    custom = (cfg or {}).get("claude_code_path")
+    if custom and Path(custom).exists():
+        return custom
+    found = shutil.which("claude")
+    if found:
+        return found
+    home = Path.home()
+    for c in (home / ".local" / "bin" / "claude.exe", home / ".local" / "bin" / "claude",
+              home / "AppData" / "Roaming" / "npm" / "claude.cmd", home / ".claude" / "local" / "claude"):
+        if c.exists():
+            return str(c)
+    return None
+
+
+def provider(cfg):
+    """Which way the Guide runs: 'claude_code' (your Claude plan), 'api' (API credit) or 'chat' (copy/paste)."""
+    choice = cfg.get("guide_source", "auto")
+    if choice in ("claude_code", "api", "chat"):
+        return choice
+    if find_claude_cli(cfg):
+        return "claude_code"
+    if api_key(cfg):
+        return "api"
+    return "chat"
+
+
+def chat_prompt(result):
+    return (build_prompt(result) + "\n\nUse web search for this. Reply with the guide only, in markdown, and end with a "
+            "'Sources' list of the links you used.")
+
+
+def _sources_from_markdown(md):
+    out, seen = [], set()
+    for title, url in re.findall(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", md):
+        if url not in seen:
+            seen.add(url)
+            out.append({"url": url, "title": title})
+    for url in re.findall(r"(?<!\()https?://[^\s)>\]]+", md):
+        if url not in seen:
+            seen.add(url)
+            out.append({"url": url, "title": url})
+    return out[:15]
+
+
+def _save(markdown, result, via, searches=0, sources=None, model=""):
+    out = {"ts": int(time.time()), "model": model, "via": via, "markdown": markdown.strip(),
+           "sources": sources if sources is not None else _sources_from_markdown(markdown), "searches": searches,
+           "for": [f"{p['name']} {p['level']}" for p in result["profiles"]]}
+    GUIDE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    GUIDE_PATH.write_text(json.dumps(out, indent=1), encoding="utf-8")
+    return out
+
+
+def save_pasted(text, result):
+    """Claude chat route: you paste Claude's answer and it becomes the Guide."""
+    text = (text or "").strip()
+    if len(text) < 80:
+        return {"error": "That's too short to be Claude's guide. Copy Claude's whole reply and paste it here."}
+    return _save(text, result, via="Claude chat")
+
+
+def fetch_guide_cli(cfg, result, run=None):
+    """Claude Code route: runs `claude -p` on this PC, logged in with your Claude account (uses your plan, not API credit)."""
+    exe = find_claude_cli(cfg)
+    if not exe:
+        return {"error": "Claude Code isn't installed. Install it (claude.com/claude-code), run `claude` once and log in "
+                         "with your Claude account, then try again. Or use the Claude chat option below."}
+    run = run or subprocess.run
+    args = [exe, "-p", "--output-format", "json", "--allowedTools", "WebSearch,WebFetch", "--permission-mode", "dontAsk"]
+    if cfg.get("guide_model"):
+        args += ["--model", cfg["guide_model"]]
+    workdir = tempfile.mkdtemp(prefix="myfa-guide-")  # an empty folder, so no project settings or hooks load
+    try:
+        proc = run(args, input=chat_prompt(result), capture_output=True, text=True, encoding="utf-8",
+                   timeout=int(cfg.get("guide_timeout", 600)), cwd=workdir,
+                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except subprocess.TimeoutExpired:
+        return {"error": "Claude Code took too long (10 minutes). Try again, or use the Claude chat option."}
+    except OSError as e:
+        return {"error": f"Couldn't start Claude Code ({e})."}
+    out = (proc.stdout or "").strip()
+    try:
+        data = json.loads(out.splitlines()[-1] if out else "{}")
+    except ValueError:
+        data = {}
+    text = (data.get("result") or "").strip()
+    if proc.returncode != 0 or data.get("is_error") or not text:
+        hint = text or (proc.stderr or out or "no output").strip()[:300]
+        if re.search(r"log ?in|auth|credential|/login", hint, re.I):
+            return {"error": "Claude Code isn't logged in. Open a terminal, run `claude`, log in with your Claude account, "
+                             "then try again."}
+        return {"error": f"Claude Code didn't return a guide: {hint}"}
+    return _save(text, result, via="Claude Code (your Claude plan)", model=data.get("model") or "Claude Code")
+
+
+def fetch(cfg, result, post=None, run=None):
+    """Run the Guide the configured way."""
+    how = provider(cfg)
+    if how == "claude_code":
+        return fetch_guide_cli(cfg, result, run=run)
+    if how == "api":
+        return fetch_guide(cfg, result, post=post)
+    return {"error": "Use the Claude chat steps below: copy the request, ask Claude, paste the answer back."}
 
 
 def api_key(cfg):
@@ -137,11 +250,7 @@ def fetch_guide(cfg, result, post=None):
     searches = sum(1 for b in blocks if b.get("type") == "server_tool_use")
     if not text:
         return {"error": "Claude didn't return a guide. Try again."}
-    out = {"ts": int(time.time()), "model": model, "markdown": text, "sources": sources, "searches": searches,
-           "for": [f"{p['name']} {p['level']}" for p in result["profiles"]]}
-    GUIDE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    GUIDE_PATH.write_text(json.dumps(out, indent=1), encoding="utf-8")
-    return out
+    return _save(text, result, via="Claude API (API credit)", searches=searches, sources=sources, model=model)
 
 
 def md_to_html(md):

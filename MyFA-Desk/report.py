@@ -320,29 +320,64 @@ def guide_panel(result, it):
             'Biggest gold first.</p></div><ol class="moves">' + "".join(lis) + "</ol></section>")
 
     cached = guide_mod.load_cached()
-    has_key = bool(guide_mod.api_key(result["cfg"]))
+    cfg = result["cfg"]
+    how = guide_mod.provider(cfg)
+    has_cli = bool(guide_mod.find_claude_cli(cfg))
+    has_key = bool(guide_mod.api_key(cfg))
     if cached and cached.get("markdown"):
         when = time.strftime("%d %b %H:%M", time.localtime(cached["ts"]))
         srcs = "".join(f'<li><a href="{esc(x["url"])}" target="_blank" rel="noopener noreferrer">{esc(x["title"])}</a></li>'
                        for x in cached.get("sources", [])[:15])
-        body = (f'<p class="fine">Researched {when} for {esc(", ".join(cached.get("for", [])))} · '
-                f'{cached.get("searches", 0)} web searches · {esc(cached.get("model", ""))}. '
+        via = cached.get("via") or cached.get("model") or ""
+        searches = f' · {cached["searches"]} web searches' if cached.get("searches") else ""
+        body = (f'<p class="fine">Researched {when} for {esc(", ".join(cached.get("for", [])))} · via {esc(via)}{searches}. '
                 'Check details in game: guides can be wrong or out of date.</p>'
                 f'<div class="guide">{guide_mod.md_to_html(cached["markdown"])}</div>')
         if srcs:
             body += (f'<details class="watch"><summary>Sources ({len(cached.get("sources", []))})</summary>'
                      f'<ul class="srcs">{srcs}</ul></details>')
-        btn = "Refresh guide"
+        refresh = True
     else:
-        body, btn = GUIDE_EMPTY, "Fetch guide"
+        body, refresh = GUIDE_EMPTY, False
+
+    if how == "claude_code":
+        btn = ("Refresh guide" if refresh else "Fetch guide") + " (your Claude plan)"
+        route = ("Runs Claude Code on this PC, logged in with your Claude account. It uses your plan's usage, "
+                 "not API credit, and takes a few minutes.")
+        action = f'<button type="button" class="cbtn primary" id="g-fetch">{btn}</button>'
+    elif how == "api":
+        btn = ("Refresh guide" if refresh else "Fetch guide") + " (API credit)"
+        route = "Uses your Claude API key: a few cents of API credit per fetch."
+        action = f'<button type="button" class="cbtn primary" id="g-fetch">{btn}</button>'
+    else:
+        route = ("Uses your Claude plan through Claude chat: copy the request, ask Claude, paste the answer back. "
+                 "To do it in one click instead, install Claude Code and log in.")
+        action = ""
+    chat_open = "open" if how == "chat" else ""
+    chat = f"""<details class="chatflow live-only" {chat_open}>
+  <summary>Use Claude chat (your Claude plan, no install)</summary>
+  <ol>
+    <li><button type="button" class="cbtn" id="g-copy">Copy request</button> It has your characters and prices in it.
+      <span class="hint" id="g-copied" role="status"></span></li>
+    <li><a class="cbtn" href="{guide_mod.CHAT_URL}" target="_blank" rel="noopener noreferrer">Open Claude</a>, paste the request
+      and send it. Make sure web search is on.</li>
+    <li>When Claude finishes, copy its whole reply and paste it here:
+      <textarea id="g-paste" rows="6" placeholder="Paste Claude's reply"></textarea>
+      <button type="button" class="cbtn primary" id="g-save">Save to Guide</button> <span class="hint" id="g-saved" role="status"></span></li>
+  </ol>
+</details>"""
+    setup = ""
+    if not has_cli and how != "claude_code":
+        setup = ('<p class="fine live-only">One-click option: install <b>Claude Code</b> (claude.com/claude-code), '
+                 'open a terminal, run <code>claude</code> once and log in with your Claude account. Then restart MyFA Desk '
+                 'and Fetch guide uses your plan.</p>')
     parts.append(
         '<section class="block" aria-labelledby="h-guide"><div class="blockhead guidehead"><div>'
         '<h2 id="h-guide">Researched guide</h2><p class="lede">Claude looks things up on the web for you: quests that pay, '
-        'profession steps, farms and recent Forever changes.</p></div>'
-        f'<div class="live-only"><button type="button" class="cbtn primary" id="g-fetch" {"" if has_key else "disabled"}>{btn}</button> '
-        '<span class="hint" id="g-status" role="status"></span></div></div>'
-        + ("" if has_key else KEY_FORM)
-        + '<p class="static-only fine">Start MyFA Desk as the app (double-click MyFA Desk) to fetch a guide from here.</p>'
+        f'profession steps, farms and recent Forever changes. {route}</p></div>'
+        f'<div class="live-only">{action} <span class="hint" id="g-status" role="status"></span></div></div>'
+        + chat + setup
+        + '<p class="static-only fine">Start MyFA Desk as the app (double-click MyFA Desk) to get a guide from here.</p>'
         + body + "</section>")
     return "".join(parts)
 
@@ -777,6 +812,14 @@ body.live form.addflip, body.live form.keyform {{ display: flex !important; }}
 .keyform {{ flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; margin: 0 0 16px; }}
 .keyform input {{ width: 320px; }}
 .keyform .hint {{ flex-basis: 100%; }}
+.chatflow {{ margin: 0 0 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 10px 16px; }}
+.chatflow summary {{ cursor: pointer; font-weight: 500; }}
+.chatflow ol {{ margin: 10px 0 4px; padding-left: 20px; display: grid; gap: 10px; color: var(--muted); }}
+.chatflow li .cbtn {{ margin-right: 6px; text-decoration: none; display: inline-block; }}
+.chatflow textarea {{ display: block; width: 100%; max-width: 760px; margin: 8px 0; background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: 13px/1.5 var(--sans); resize: vertical; }}
+.chatflow textarea:focus {{ border-color: var(--gold); outline: none; }}
+body.live details.chatflow {{ display: block !important; }}
 .block.ready {{ border: 1px solid rgba(114, 211, 142, .35); background: rgba(114, 211, 142, .05); border-radius: 8px;
   padding: 16px 18px 10px; }}
 .readylist {{ list-style: none; margin: 0; padding: 0; max-width: 760px; }}

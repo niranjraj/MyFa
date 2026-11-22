@@ -57,7 +57,9 @@ DEFAULTS = {
     "open_report": True,
     "claude_model": "claude-sonnet-5-5",
     "anthropic_api_key": "",     # optional: enables the researched Guide (or set ANTHROPIC_API_KEY)
-    "guide_searches": 8,         # web searches per guide (each costs about 1 cent)
+    "guide_searches": 8,         # web searches per guide with the API option (each costs about 1 cent)
+    "guide_source": "auto",      # "auto", "claude_code" (your Claude plan), "chat" (copy/paste, your plan) or "api"
+    "claude_code_path": "",      # only if Claude Code is installed somewhere MyFA can't find
     "desktop_notifications": True,  # Windows notification when a flip becomes worth selling
     "auto_update": "ask",        # "ask", "always" or "never": check GitHub for a new MyFA release at start
     "github_token": "",          # only needed if the MyFa repo is made private
@@ -326,8 +328,16 @@ def process(sv_path: Path, targets_path: Path, cfg, history, args, first=False):
             ADVICE_PATH.write_text(advice, encoding="utf-8")
     if getattr(args, "guide", False):
         import guide as guide_mod
-        print("Researching your guide with Claude (web search)... this takes about a minute.")
-        out = guide_mod.fetch_guide(cfg, result)
+        how = guide_mod.provider(cfg)
+        if how == "chat":
+            prompt_path = HERE / "claude_guide_request.md"
+            prompt_path.write_text(guide_mod.chat_prompt(result), encoding="utf-8")
+            print(f"No Claude Code or API key found. Paste {prompt_path.name} into Claude chat; the app can save the answer.")
+            out = {"error": "Used the Claude chat route instead."}
+        else:
+            print("Researching your guide with " + ("Claude Code (your Claude plan)" if how == "claude_code" else "the Claude API")
+                  + " and web search... this takes a few minutes.")
+            out = guide_mod.fetch(cfg, result)
         print(out["error"] if out.get("error") else f"Guide ready ({out.get('searches', 0)} web searches). See the Guide tab.")
     import html as _html
     REPORT_PATH.write_text(build(result, _html.escape(advice) if advice else None, str(CONFIG_PATH)), encoding="utf-8")

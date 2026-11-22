@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.0
+- The Guide can now use your Claude plan instead of API credit, in two ways:
+  - **Claude Code (one click):** if Claude Code is installed on your PC and logged in with your Claude account, **Fetch guide** runs it in the background with web search. It counts against your plan's usage, not API credit.
+  - **Claude chat (no install):** **Copy request** copies a ready-made request with your characters and prices, **Open Claude** opens a new chat, and you paste Claude's answer into **Save to Guide**.
+- **Settings > Guide uses:** Automatic (Claude Code if installed, otherwise Claude chat), Claude Code, Claude chat, or Claude API key. The API key is optional now.
+
 ## 1.4.0
 - **Add flips by hand.** In game: **+ Add flip** on the My flips tab (or `/myfa add`). Drag the item in from your bags, shift-click it, or type its name, then enter quantity and price each. In MyFA Desk: the **Add a flip** form on My flips, with item-name suggestions and an optional date. Desk-added flips reach the addon on your next /reload.
 - **Remove** button on each row of Desk's My flips stops tracking that flip, in Desk and in game.

@@ -64,7 +64,12 @@ The **Guide** tab in MyFA Desk answers "what should I do next?":
 
 - **Your characters:** level, class, zone, profession skills and gold for each character. Log in once on each, and open each profession window once.
 - **Your next moves:** up to ten concrete actions ranked by gold: sell what's ready, post your items, craft from what you own, buy the best flips, what your gathering skill can pick that sells best now, and when to visit a trainer.
-- **Researched guide:** with a Claude API key (console.anthropic.com, API keys), press **Fetch guide**. Claude searches Wowhead and current WoW Forever guides for your characters and writes a plan: quests that pay at your level, profession next steps priced from your own scans, farms, items about to move and recent Forever changes, with sources. Paste the key in the Guide tab or in Settings; it's stored only in `config.json` on your PC. A fetch uses up to 8 web searches and costs a few cents. Refresh it when you level up or a patch lands. In the terminal: `run_desk.bat --guide`.
+- **Researched guide:** Claude searches Wowhead and current WoW Forever guides for your characters and writes a plan: quests that pay at your level, profession next steps priced from your own scans, farms, items about to move and recent Forever changes, with sources. Refresh it when you level up or a patch lands. Three ways to run it (**Settings > Guide uses**; Automatic picks for you):
+  - **Claude Code, your Claude plan, one click.** Install Claude Code (claude.com/claude-code), open a terminal, run `claude` once and log in with your Claude account. Then **Fetch guide** runs it in the background. It takes a few minutes and counts against your plan's usage, not API credit.
+  - **Claude chat, your Claude plan, no install.** **Copy request**, then **Open Claude**, paste it and send (with web search on). Copy Claude's reply into the box and press **Save to Guide**.
+  - **Claude API key, API credit.** Paste a key from console.anthropic.com in Settings. A fetch uses up to 8 web searches and costs a few cents.
+
+  In the terminal, `run_desk.bat --guide` uses Claude Code or the API key, or writes `claude_guide_request.md` for you to paste into Claude chat.
 
 Gathering skill requirements use classic values; Forever's new herbs and any changed nodes aren't in that list yet.
 
