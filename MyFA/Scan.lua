@@ -102,13 +102,15 @@ local function finish(realmKey, byItem, auctions)
     end
 
     realm.items = items
+    realm.neutral = ns.AtNeutralAH() or nil
     realm.lastScan = time()
     realm.auctions = auctions
     realm.itemCount = count
     stopTicker()
     scan = { phase = "done", auctions = auctions, items = count, finished = time() }
     ns.scannedThisSession = true
-    ns.Print(string.format("scan done: %d auctions, %d items. Next: type /reload so MyFA Desk can read it.", auctions, count))
+    ns.Print(string.format("%sscan done: %d auctions, %d items. Next: type /reload so MyFA Desk can read it.",
+        ns.AtNeutralAH() and "neutral Auction House " or "", auctions, count))
     refresh()
     if ns.RefreshPanel then ns.RefreshPanel() end
     if ns.CheckFlips then ns.CheckFlips() end
@@ -124,7 +126,7 @@ local function read()
         return
     end
     local myToken = token
-    local realmKey = ns.RealmKey()
+    local realmKey = ns.MarketKey()  -- your faction's Auction House, or the neutral one
     local byItem = {}
     local index, used = 0, 0
     scan.phase, scan.total, scan.done = "reading", total, 0
@@ -178,7 +180,7 @@ local function watchServer()
 end
 
 function ns.ScanCooldownLeft()
-    local realm = MyFA_DB.realms[ns.RealmKey()]
+    local realm = MyFA_DB.realms[ns.MarketKey()]
     local last = realm and realm.lastScan or 0
     return math.max(0, SCAN_COOLDOWN - (time() - last))
 end

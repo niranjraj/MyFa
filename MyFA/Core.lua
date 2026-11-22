@@ -1,6 +1,6 @@
 -- MyFA Core: saved data, character snapshot (bags, gold, recipes, vendor prices), slash commands.
 local ADDON, ns = ...
-ns.VERSION = "1.5.2"
+ns.VERSION = "1.6.0"
 ns.HISTORY_DAYS = 14
 
 local DB_DEFAULTS = {
@@ -13,7 +13,11 @@ local DB_DEFAULTS = {
     alerted = {},   -- [itemID] = { p = price alerted at, t = time }
     imported = {},  -- [mid] = true: flips added in MyFA Desk that are already in the ledger
     forgotten = {}, -- [itemID] = time: "stop tracking" requests from MyFA Desk already applied
-    settings = { roi = 0.15, alerts = true },
+    posts = {},     -- { t, id, q, u, d = duration, a = "home"|"neutral", c, dep = deposit paid, dc = deposit calculated, r = outcome }
+    sales = {},     -- { t, k = "sold"|"expired"|"cancelled", id, q, g = gross, cut, a, c, mq, cost, lost }
+    mailSeen2 = {}, -- [kind|signature] = { sent times } so a mail is only counted once
+    depRate = {},   -- ["home:2"] = deposit as a share of vendor price, learned from your own posts
+    settings = { roi = 0.15, alerts = true, ahMode = "auto" },
     ui = {},        -- panel position
 }
 
@@ -51,6 +55,47 @@ function ns.RealmKey()
     local realm = (GetNormalizedRealmName and GetNormalizedRealmName()) or GetRealmName() or "Unknown"
     local faction = UnitFactionGroup("player") or "Neutral"
     return realm .. "-" .. faction
+end
+
+-- the neutral (goblin) Auction House in Gadgetzan, Booty Bay and Everlook: a separate market both factions share
+function ns.NeutralKey()
+    local realm = (GetNormalizedRealmName and GetNormalizedRealmName()) or GetRealmName() or "Unknown"
+    return realm .. "-NeutralAH"
+end
+
+local NEUTRAL_MAPS = { [1446] = true, [1434] = true, [1452] = true }  -- Tanaris, Stranglethorn Vale, Winterspring
+local NEUTRAL_ZONES = {
+    ["Gadgetzan"] = true, ["Booty Bay"] = true, ["Everlook"] = true, ["Tanaris"] = true,
+    ["Winterspring"] = true, ["Stranglethorn Vale"] = true, ["Cape of Stranglethorn"] = true,
+}
+
+-- true when the Auction House you're standing at is a neutral one
+function ns.DetectNeutral()
+    local mode = MyFA_DB and MyFA_DB.settings.ahMode or "auto"
+    if mode == "neutral" then return true end
+    if mode == "faction" then return false end
+    for _, fn in ipairs({ GetSubZoneText, GetMinimapZoneText, GetRealZoneText, GetZoneText }) do
+        if fn then
+            local ok, z = pcall(fn)
+            if ok and z and NEUTRAL_ZONES[z] then return true end
+        end
+    end
+    if C_Map and C_Map.GetBestMapForUnit then
+        local ok, id = pcall(C_Map.GetBestMapForUnit, "player")
+        if ok and id and NEUTRAL_MAPS[id] then return true end
+    end
+    return false
+end
+
+ns.atNeutral = false
+function ns.AtNeutralAH() return ns.atNeutral end
+function ns.AHKind() return ns.atNeutral and "neutral" or "home" end
+-- the market the open Auction House belongs to: your faction's, or the neutral one
+function ns.MarketKey() return ns.atNeutral and ns.NeutralKey() or ns.RealmKey() end
+function ns.CutRate(kind)
+    local t = MyFA_Targets
+    if kind == "neutral" then return (t and t.neutral and t.neutral.cut) or 0.15 end
+    return (t and t.cut) or 0.05
 end
 
 function ns.CharKey()
@@ -223,7 +268,7 @@ function ns.SnapshotMail()
     end
     c.mail = mail
     c.mailT = time()
-    if ns.ReadPurchaseMail then ns.ReadPurchaseMail() end
+    if ns.ReadAuctionMail then ns.ReadAuctionMail() end
 end
 
 -- Everything you own, across every character on this Auction House --------------
@@ -243,6 +288,13 @@ function ns.Owned(itemID)
                 if n and n > 0 then
                     total = total + n
                     parts[#parts + 1] = { shortName(key), where, n }
+                end
+            end
+            for kind, l in pairs(c.listed or {}) do
+                local n = l.items and l.items[itemID]
+                if n and n > 0 then
+                    total = total + n
+                    parts[#parts + 1] = { shortName(key), kind == "neutral" and "on neutral AH" or "on AH", n }
                 end
             end
         end
@@ -379,6 +431,7 @@ f:RegisterEvent("MAIL_SHOW")
 for _, e in ipairs({ "PLAYER_LEVEL_UP", "SKILL_LINES_CHANGED", "ZONE_CHANGED_NEW_AREA" }) do pcall(f.RegisterEvent, f, e) end
 f:RegisterEvent("MAIL_INBOX_UPDATE")
 f:RegisterEvent("MAIL_CLOSED")
+pcall(f.RegisterEvent, f, "AUCTION_HOUSE_SHOW")
 
 f:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "ADDON_LOADED" and arg1 == ADDON then
@@ -387,6 +440,7 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
         MyFA_DB.addonVersion = ns.VERSION
         MyFA_DB.settings.roi = MyFA_DB.settings.roi or 0.15
         if MyFA_DB.settings.alerts == nil then MyFA_DB.settings.alerts = true end
+        MyFA_DB.settings.ahMode = MyFA_DB.settings.ahMode or "auto"
     elseif event == "PLAYER_LOGIN" then
         ns.SnapshotBags()
         ns.SnapshotProfile()
@@ -406,6 +460,13 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
         bankOpen = false
     elseif event == "PLAYER_LEVEL_UP" or event == "SKILL_LINES_CHANGED" or event == "ZONE_CHANGED_NEW_AREA" then
         if C_Timer then C_Timer.After(0.5, ns.SnapshotProfile) else ns.SnapshotProfile() end
+    elseif event == "AUCTION_HOUSE_SHOW" then
+        local was = ns.atNeutral
+        ns.atNeutral = ns.DetectNeutral()
+        if ns.atNeutral and not was then
+            ns.Print("this is a neutral Auction House: its own market, shared with the Alliance. 15% cut, higher deposits. "
+                .. "MyFA keeps its prices separate. (Wrong? /myfa ah faction)")
+        end
     elseif event == "MAIL_SHOW" or event == "MAIL_INBOX_UPDATE" or event == "MAIL_CLOSED" then
         ns.SnapshotMail()
     elseif event == "TRADE_SKILL_LIST_UPDATE" then
@@ -431,6 +492,8 @@ local HELP = {
     "/myfa roi 20 - alert when a flip is worth 20%% profit after the cut (now %d%%)",
     "/myfa alerts on|off - sell alerts",
     "/myfa dock - snap the panel back beside the Auction House",
+    "/myfa profit - what your sales made in the last 7 and 30 days",
+    "/myfa ah auto|neutral|faction - which market this Auction House is (auto works it out from the zone)",
 }
 
 SlashCmdList.MYFA = function(msg)
@@ -439,6 +502,20 @@ SlashCmdList.MYFA = function(msg)
     cmd = (cmd or ""):lower()
     if cmd == "scan" then
         ns.StartScan()
+    elseif cmd == "profit" then
+        if ns.PrintProfit then ns.PrintProfit() end
+    elseif cmd == "ah" then
+        local mode = rest:lower()
+        if mode == "auto" or mode == "neutral" or mode == "faction" then
+            MyFA_DB.settings.ahMode = mode
+            if AuctionHouseFrame and AuctionHouseFrame:IsShown() then ns.atNeutral = ns.DetectNeutral() end
+            ns.Print("Auction House type: " .. mode .. (mode == "auto" and " (neutral in Gadgetzan, Booty Bay and Everlook)." or ".")
+                .. " This one counts as " .. (ns.atNeutral and "neutral." or "your faction's."))
+            if ns.RefreshHeader then ns.RefreshHeader() end
+            if ns.RefreshPanel then ns.RefreshPanel() end
+        else
+            ns.Print("usage: /myfa ah auto|neutral|faction  (now " .. (MyFA_DB.settings.ahMode or "auto") .. ")")
+        end
     elseif cmd == "status" then
         local r = MyFA_DB.realms[ns.RealmKey()]
         if r and r.lastScan then
@@ -457,6 +534,12 @@ SlashCmdList.MYFA = function(msg)
         local n = ns.Positions and #ns.Positions() or 0
         ns.Print(string.format("tracking %d flips; alerts %s at %d%% profit. MyFA %s.", n,
             MyFA_DB.settings.alerts and "on" or "off", math.floor(MyFA_DB.settings.roi * 100 + 0.5), ns.VERSION))
+        local nr = MyFA_DB.realms[ns.NeutralKey()]
+        if nr and nr.lastScan then
+            ns.Print(string.format("neutral Auction House: last scan %d min ago, %d items.", math.floor((time() - nr.lastScan) / 60), nr.itemCount or 0))
+        end
+        ns.Print(string.format("%d sales and %d expired or cancelled auctions recorded.", ns.CountOutcomes and ns.CountOutcomes("sold") or 0,
+            ns.CountOutcomes and (ns.CountOutcomes("expired") + ns.CountOutcomes("cancelled")) or 0))
         ns.Print(MyFA_DB.lastBuyT and string.format("last purchase recorded %d min ago.", math.floor((time() - MyFA_DB.lastBuyT) / 60))
             or "no purchases recorded yet. Buy something, or open your mailbox so MyFA can read your Auction won mails.")
     elseif cmd == "bought" or cmd == "forget" then

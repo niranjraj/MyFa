@@ -10,6 +10,7 @@ local MUTED = "|cffa9a59a"
 local BLUE = "|cff8fb8f0"
 local GOLDC = "|cffe3bd62"
 local GREY = "|cff9d9d9d"
+local PURPLE = "|cffc39bf0"
 
 local function tag(color, text) return color .. text .. "|r  " end
 
@@ -42,9 +43,13 @@ local function targets()
     return MyFA_Targets
 end
 
+-- at a neutral Auction House the Buy and Sell lists are the neutral ones
 local function list()
     if currentTab == "mine" then return ns.Positions() end
     local t = targets()
+    if t and ns.AtNeutralAH() and currentTab ~= "crafts" then
+        return (t.neutral and t.neutral[currentTab]) or {}
+    end
     return (t and t[currentTab]) or {}
 end
 
@@ -179,6 +184,13 @@ local function rowTooltip(self)
         if e.kind == "vendor" then
             steps = { "1. Press Buy, then Confirm (only offered at " .. ns.Money(e.max) .. " each or less).",
                       "2. Sell them to any vendor.", "Profit: " .. ns.Money(e.profit or 0) .. "." }
+        elseif e.kind == "toneutral" or e.kind == "tohome" then
+            local there = e.kind == "toneutral" and "a neutral Auction House (Gadgetzan, Booty Bay or Everlook)"
+                or "your faction's Auction House"
+            steps = { "1. Press Buy, then Confirm (only offered at " .. ns.Money(e.max) .. " each or less).",
+                      "2. Take them to " .. there .. ", or mail them to a character parked there.",
+                      "3. Post at about " .. ns.Money(e.sell or 0) .. " each.",
+                      "Expected profit after that Auction House's cut and likely deposits: " .. ns.Money(e.profit or 0) .. "." }
         else
             steps = { "1. Press Buy. MyFA asks the server for the live price.",
                       "2. Press Confirm. It's only offered at " .. ns.Money(e.max) .. " each or less.",
@@ -271,7 +283,8 @@ local function updateRow(r, e)
         local left = remaining(e)
         local kind = (e.kind == "vendor" and "  vendor flip") or (e.kind == "raid" and "  raid stock") or ""
         local label = (e.kind == "vendor" and tag(GREEN, "VENDOR")) or (e.kind == "raid" and tag(BLUE, "RAID"))
-            or (e.kind == "snipe" and tag(RED, "SNIPE")) or tag(GOLDC, "FLIP")
+            or (e.kind == "snipe" and tag(RED, "SNIPE")) or (e.kind == "toneutral" and tag(PURPLE, "TO NEUTRAL"))
+            or (e.kind == "tohome" and tag(PURPLE, "TO " .. string.upper(UnitFactionGroup("player") or "HOME") .. " AH")) or tag(GOLDC, "FLIP")
         r.detail:SetText(string.format("%sbuy x%d, max %s each", label, left, ns.Money(e.max)))
         r.profit:SetText(GREEN .. "+" .. ns.Money(e.profit or 0) .. "|r")
         if isCommodity(e.id) then
@@ -325,12 +338,13 @@ end
 
 local function nextStep()
     local t = targets()
-    local realm = MyFA_DB.realms[ns.RealmKey()]
+    local realm = MyFA_DB.realms[ns.MarketKey()]
     local last = realm and realm.lastScan
     if not last then
         return ahOpen() and "Next: press Full scan to read every auction." or "Next: open the Auction House and press Full scan."
     end
-    if not t or not t.scan or t.scan < last - 5 then
+    local deskScan = t and (ns.AtNeutralAH() and t.neutral and t.neutral.scan or t.scan)
+    if not deskScan or deskScan < last - 5 then
         if ns.scannedThisSession then
             return GOLDC .. "Next: type /reload so MyFA Desk can read this scan.|r"
         end
@@ -357,9 +371,11 @@ end
 function ns.RefreshHeader()
     if not panel then return end
     local t = targets()
-    local realm = MyFA_DB.realms[ns.RealmKey()]
+    local realm = MyFA_DB.realms[ns.MarketKey()]
     local left = ns.ScanCooldownLeft and ns.ScanCooldownLeft() or 0
     local parts = { "Last scan " .. age(realm and realm.lastScan) }
+    if ns.AtNeutralAH() then table.insert(parts, 1, PURPLE .. "Neutral AH, 15% cut|r" .. MUTED) end
+    panel.title:SetText(ns.AtNeutralAH() and ("MyFA  " .. PURPLE .. "neutral|r") or "MyFA")
     parts[#parts + 1] = t and t.generated and ("targets " .. age(t.generated)) or "no targets yet"
     if left > 0 then parts[#parts + 1] = string.format("next scan in %d:%02d", math.floor(left / 60), left % 60) end
     panel.status:SetText(MUTED .. table.concat(parts, "  ·  ") .. "|r")
@@ -383,7 +399,7 @@ function ns.RefreshHeader()
         local f = (sc.total or 0) > 0 and (sc.done or 0) / sc.total or 0
         setBar(f, GOLD, string.format("Reading auctions  %d%%   (%s of %s)", math.floor(f * 100), num(sc.done), num(sc.total)))
     elseif sc.phase == "done" and ns.scannedThisSession and time() - (sc.finished or 0) < 600
-        and not (t and t.scan and realm and t.scan >= (realm.lastScan or 0) - 5) then
+        and not (t and realm and ((ns.AtNeutralAH() and t.neutral and t.neutral.scan) or t.scan or 0) >= (realm.lastScan or 0) - 5) then
         panel.bar.waiting = false
         setBar(1, { 0.44, 0.82, 0.54 }, string.format("Done: %s auctions, %s items. Type /reload to send it to Desk.", num(sc.auctions), num(sc.items)))
     elseif sc.phase == "cancelled" and time() - (sc.finished or 0) < 120 then
@@ -402,11 +418,25 @@ function ns.RefreshPanel()
     local data = list()
     offset = math.max(0, math.min(offset, #data - ROWS))
     for i = 1, ROWS do updateRow(rows[i], data[i + offset]) end
-    panel.hint:SetText(TAB_HINT[currentTab] or "")
+    local hint = TAB_HINT[currentTab] or ""
+    if currentTab == "mine" and ns.ProfitSince then
+        local r = ns.ProfitSince(time() - 7 * 86400)
+        if r.sales > 0 or r.expired > 0 then
+            hint = string.format("Last 7 days: %d sales, flip profit %s%s|r, deposits lost %s. /myfa profit for more.",
+                r.sales, r.flip >= 0 and GREEN .. "+" or RED, ns.Money(r.flip), ns.Money(r.lost))
+        end
+    elseif ns.AtNeutralAH() and (currentTab == "buys" or currentTab == "sells") then
+        hint = currentTab == "buys" and "Neutral Auction House: cheap here, worth more on your faction's Auction House. Buy, then carry or mail them home."
+            or "What sells for more here than at home, after the 15% neutral cut and its higher deposits."
+    end
+    panel.hint:SetText(hint)
     panel.addFlip:SetShown(currentTab == "mine")
     panel.footer:SetWidth(currentTab == "mine" and (PANEL_W - 140) or (PANEL_W - 28))
     for key, tab in pairs(tabs) do
-        local n = key == "mine" and #ns.Positions() or #((targets() or {})[key] or {})
+        local n
+        if key == "mine" then n = #ns.Positions()
+        elseif ns.AtNeutralAH() and key ~= "crafts" then n = #(((targets() or {}).neutral or {})[key] or {})
+        else n = #((targets() or {})[key] or {}) end
         tab:SetText(tab.label .. " " .. n)
         if key == currentTab then tab:LockHighlight() else tab:UnlockHighlight() end
     end
@@ -884,7 +914,9 @@ local function addTooltipLines(tt, id)
     local t = targets()
     local deskValue = t and t.prices and t.prices[id]
     local owned, parts = ns.Owned(id)
-    if not s and not deskValue and owned == 0 then return end
+    local hasSales = ns.SellStats and ns.SellStats(id).listings > 0
+    local nrealm = MyFA_DB.realms[ns.NeutralKey()]
+    if not s and not deskValue and owned == 0 and not hasSales and not (nrealm and nrealm.items and nrealm.items[id]) then return end
     tt:AddLine(" ")
     if owned > 0 then
         tt:AddDoubleLine("|cffd9b45aMyFA|r you own", owned .. MUTED .. "  " .. ns.WhereText(parts, 3) .. "|r", 1, 1, 1, 1, 1, 1)
@@ -900,6 +932,18 @@ local function addTooltipLines(tt, id)
     end
     if deskValue then
         tt:AddDoubleLine("|cffd9b45aMyFA|r market", ns.Money(deskValue), 1, 1, 1, 1, 1, 1)
+    end
+    local nr = MyFA_DB.realms[ns.NeutralKey()]
+    local ns_ = nr and nr.items and nr.items[id]
+    if ns_ then
+        tt:AddDoubleLine("|cffd9b45aMyFA|r neutral AH", ns.Money(ns_.m) .. MUTED .. "  (" .. (ns_.q or 0) .. " listed, 15% cut)|r", 1, 1, 1, 1, 1, 1)
+    end
+    if ns.SellStats then
+        local st = ns.SellStats(id)
+        if st.listings > 0 then
+            tt:AddDoubleLine("|cffd9b45aMyFA|r your sales", string.format("%d%% of what you listed sold%s", math.floor(st.rate * 100 + 0.5),
+                st.lost > 0 and (", " .. ns.Money(st.lost) .. " deposits lost") or ""), 1, 1, 1, 1, 1, 1)
+        end
     end
     for _, e in ipairs(t and t.buys or {}) do
         if e.id == id then

@@ -52,6 +52,11 @@ DEFAULTS = {
     "band_days": 30,             # days used for buy-under / sell-at price bands
     "min_band_spread": 0.2,      # only show bands with at least 20% profit between the low and high after the cut
     "raids_file": "",            # blank = raids.json next to this app
+    "neutral_cut": 0.15,         # neutral Auction Houses (Gadgetzan, Booty Bay, Everlook) take 15%
+    "neutral_deposit_mult": 5,   # ...and charge five times the deposit until MyFA learns yours
+    "deposit_rate": 0.20,        # deposit as a share of vendor price until MyFA sees you post (8-hour classic rule)
+    "default_sell_rate": 0.6,    # share of listings assumed to sell until MyFA has your own sale mails
+    "neutral_max_age_days": 7,   # ignore neutral prices older than this
     "include_gear": False,       # gear has random suffixes that share one item ID, so prices mix
     "vendor_costs": {},          # {"3371": 4} item ID -> copper, for vendor mats MyFA hasn't seen yet
     "open_report": True,

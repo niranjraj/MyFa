@@ -58,6 +58,27 @@ Items with fewer than 10 listed (often recipes and patterns) are thin markets. T
 - **Add flips by hand:** press **+ Add flip** on the My flips tab in game (or `/myfa add`), drop the item in or shift-click it, then enter quantity and price each. In MyFA Desk, use the **Add a flip** form on My flips. It suggests item names, and the flip reaches the game on your next /reload.
 - **Stop tracking** a flip with **Remove** on its row in Desk, or `/myfa forget [item]` in game. Turn alerts off with `/myfa alerts off`.
 
+## Profit from your sales
+
+- When an auction sells, expires or is cancelled, open a mailbox on that character. MyFA reads the mail, closes the flip it belongs to with the real profit, and records any deposit you lost. Type `/reload` and Desk's **Profit** tab shows:
+  - what flips, raid holds, crafts and farmed or looted items made (7 days, 30 days, all time);
+  - profit by day;
+  - how each item sells;
+  - items that keep coming back unsold;
+  - every sale and lost deposit.
+- In game, `/myfa profit` prints the 7-day and 30-day totals.
+- **Deposit risk:** MyFA learns how often each item sells for you and what your deposits are. Every profit figure (flips, crafts, sell suggestions, alert prices) already subtracts the deposits you'd lose relisting the unsold part. Until it has your own sales, it assumes 60% of listings sell (`default_sell_rate`).
+
+## Neutral Auction House
+
+- Gadgetzan, Booty Bay and Everlook share one neutral market with the Alliance. It takes a 15% cut and charges about five times the deposit.
+- Scan there like anywhere else. MyFA recognises it, keeps those prices separate, and says so in chat. If it guesses wrong, type `/myfa ah neutral` or `/myfa ah faction` (and `/myfa ah auto` to go back).
+- Desk's **Neutral AH** tab lists:
+  - what to buy there and sell at home;
+  - what to buy at home and sell there;
+  - what you own that fetches more there.
+- In game, the Buy and Sell tabs switch to the neutral lists while you stand at a neutral Auction House. Neutral prices older than a week are ignored.
+
 ## Guide
 
 The **Guide** tab in MyFA Desk answers "what should I do next?":
@@ -123,6 +144,11 @@ Market value is set by where the bulk of supply sits, not by the cheapest listin
 | `history_days` | 14 | Days of prices that set market value. |
 | `chart_days` | 60 | Days of history kept in the Trends charts. |
 | `hold_rising_slope` | 0.04 | Suggest holding an item instead of selling once it's rising this fast per day. |
+| `neutral_cut` | 0.15 | Cut taken by the neutral Auction Houses. |
+| `neutral_deposit_mult` | 5 | Neutral deposits compared with your faction's, until MyFA learns them from your posts. |
+| `deposit_rate` | 0.20 | Deposit as a share of vendor price until MyFA sees you post (the classic 8-hour rule). |
+| `default_sell_rate` | 0.6 | Share of listings assumed to sell until MyFA has your own sale mails. |
+| `neutral_max_age_days` | 7 | Ignore neutral prices older than this. |
 
 Desk reloads the config on every scan, so there's no need to restart it.
 

@@ -2,8 +2,8 @@
 
 MyFA has two parts that work together:
 
-- **MyFA** (in-game addon) scans the Auction House and records bags, bank, mailbox, gold and recipes on every character. It shows Buy / Sell / Craft / My flips tabs beside whichever Auction House window you use, tracks what you buy, and alerts you when a flip is worth selling.
-- **MyFA Desk** (desktop app) turns those scans into flips, craft margins, raid prep, price charts and a dashboard, and writes the targets back into the addon.
+- **MyFA** (in-game addon) scans the Auction House and records bags, bank, mailbox, gold and recipes on every character. It shows Buy / Sell / Craft / My flips tabs beside whichever Auction House window you use, tracks what you buy and sell (from your Auction House mail), and alerts you when a flip is worth selling.
+- **MyFA Desk** (desktop app) turns those scans into flips, craft margins, raid prep, neutral Auction House trades, real profit from your sales, price charts and a dashboard, and writes the targets back into the addon.
 
 Nothing is automated: every purchase in game is your click.
 

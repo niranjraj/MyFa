@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.6.0
+- **Real profit from your sales.** When you open a mailbox, MyFA now reads "Auction successful", "Auction expired" and "Auction cancelled" mails as well as "Auction won":
+  - A sale closes your flip with the real profit, after the cut, against what you paid (oldest purchases first). Chat shows it, for example *SOLD 6 Wild Steelbloom for 1g 42s after the cut: +46s 50c on your flip.*
+  - Expired and cancelled auctions record the deposit you lost.
+  - Each mail is counted once, even when two sales are identical.
+- **Deposits recorded when you post.** MyFA notes each listing and the deposit you paid, and learns your deposit rate. Items listed on the Auction House still count as yours ("on AH") in My flips and tooltips.
+- **Deposit risk in every profit figure.** MyFA works out how often each item sells for you and takes the deposits you'd lose relisting it off flips, crafts, sell suggestions, alert prices and neutral trades. Until it has your own sales it assumes 60% of listings sell.
+- **New Profit tab** in MyFA Desk: what flips, raid holds, crafts and farmed or looted items really made over 7 days, 30 days and all time; profit by day; how each item sells; items that keep coming back unsold; and every sale and lost deposit. In game: `/myfa profit`, a 7-day line on My flips, and "your sales" in item tooltips.
+- **Neutral Auction House trading** (Gadgetzan, Booty Bay, Everlook):
+  - MyFA recognises a neutral Auction House and keeps its scans separate from your faction's (`/myfa ah neutral|faction|auto` if it guesses wrong).
+  - New **Neutral AH** tab in Desk shows three lists: buy on the neutral AH and sell at home, buy at home and sell on the neutral AH, and things you own that fetch more there. All use its 15% cut and higher deposits.
+  - In game, the Buy and Sell tabs switch to the neutral lists when you stand at a neutral Auction House. Home Buy rows that go to the neutral AH are marked TO NEUTRAL. Tooltips show the neutral price.
+- New settings: `neutral_cut`, `neutral_deposit_mult`, `deposit_rate`, `default_sell_rate`, `neutral_max_age_days`.
+
 ## 1.5.2
 - Purchases show in My flips straight away. Bought items wait in the mailbox, and MyFA used to hide a flip until it saw them there. Now anything bought since you last opened the mailbox counts as "on its way, mail".
 - Backup purchase tracking: when you open the mailbox, MyFA reads your "Auction won" mails (item, quantity, price paid) and records any purchase it missed. This covers buys made through another auction addon that MyFA's hook can't see. Purchases it already recorded aren't added twice, and "sold" mails are ignored.

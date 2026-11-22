@@ -256,7 +256,7 @@ def analysis_panel(result, it, sort_or):
 
 
 MOVE_TAG = {"sell": ("SELL", "act-ah"), "craft": ("CRAFT", "act-c"), "flip": ("FLIP", "act-h"),
-            "gather": ("GATHER", "act-v"), "skill": ("SKILL", "act-v")}
+            "gather": ("GATHER", "act-v"), "skill": ("SKILL", "act-v"), "fix": ("FIX", "risk-med")}
 
 GUIDE_EMPTY = (
     '<div class="empty"><p>Not researched yet. <b>Fetch guide</b> has Claude search Wowhead and current WoW Forever guides '
@@ -382,6 +382,228 @@ def guide_panel(result, it):
     return "".join(parts)
 
 
+CAT_COLOR = {"flip": "#b08a2c", "raid": "#4d8ad0", "craft": "#4a9c6a", "farm": "#a866c9"}
+CAT_SHORT = {"flip": "Flip", "raid": "Raid hold", "craft": "Craft", "farm": "Farmed or looted"}
+WINDOWS = [("7", "7 days"), ("30", "30 days"), ("all", "All time")]
+
+
+def _signed_cls(v):
+    return "pos" if (v or 0) > 0 else ("neg" if (v or 0) < 0 else "")
+
+
+def profit_panel(result, it, sort_or):
+    pr = result.get("profit") or {}
+    rk = result.get("risk") or {}
+    now = result["now"]
+    if not pr.get("has_data"):
+        return ('<div class="empty"><p>No sales recorded yet. MyFA reads them from your mailbox: when an auction sells, '
+                'expires or is cancelled, open a mailbox on that character and MyFA records it, with the deposit and what '
+                'you paid. Then type <code>/reload</code>. Purchases close automatically when they sell, so this tab shows '
+                'what each approach really made.</p></div>')
+    parts = []
+    # statement: one table per window, switched by the segmented control
+    seg = "".join(f'<button type="button" data-win="{w}" aria-pressed="{"true" if w == "30" else "false"}">{esc(lbl)}</button>'
+                  for w, lbl in WINDOWS)
+    stmts = []
+    for w, lbl in WINDOWS:
+        win = pr["windows"][w]
+        tot = win["sum"]
+        peak = max((abs(c["profit"]) for c in win["cats"].values()), default=0) or 1
+        rows = []
+        for key, label, desc in pr["categories"]:
+            c = win["cats"][key]
+            pct_w = abs(c["profit"]) / peak * 100
+            rows.append(
+                f'<tr><th scope="row"><span class="catname"><i class="sw2" style="background:{CAT_COLOR[key]}"></i>{esc(label)}</span>'
+                f'<span class="sub">{esc(desc)}</span></th>'
+                f'<td class="num">{c["sales"]:,}</td><td class="num opt">{money(c["net"])}</td>'
+                f'<td class="num opt">{money(c["cost"]) if c["cost"] else "<span class=na>none</span>"}</td>'
+                f'<td class="num opt">{money(-c["lost"]) if c["lost"] else "<span class=na>none</span>"}</td>'
+                f'<td class="num strong {_signed_cls(c["profit"])}">{money(c["profit"], True)}</td>'
+                f'<td class="barcell opt" aria-hidden="true">'
+                + (f'<span class="hbar {_signed_cls(c["profit"])}" style="--w:{pct_w:.1f}%;--c:{CAT_COLOR[key]}"></span>' if c["profit"] else "")
+                + '</td></tr>')
+        lead = (f'<strong>{money(tot["profit"], True)}</strong> profit from {tot["sales"]:,} sale{"s" if tot["sales"] != 1 else ""}'
+                f'{", " + money(win["neutral"], True) + " of it on the neutral AH" if win["neutral"] else ""}'
+                f'{", after " + money(tot["lost"]) + " lost in deposits" if tot["lost"] else ""}.')
+        stmts.append(
+            f'<div class="stmtwin" data-window="{w}"{"" if w == "30" else " hidden"}>'
+            f'<p class="lede">{"Last " + lbl if w != "all" else "Since MyFA started recording"}: {lead}</p>'
+            f'<div class="tablewrap"><table class="stmt" data-nosort><thead><tr><th scope="col">Approach</th>'
+            f'<th scope="col" class="num">Sales</th><th scope="col" class="num opt">After the cut</th>'
+            f'<th scope="col" class="num opt">Cost</th><th scope="col" class="num opt">Deposits lost</th>'
+            f'<th scope="col" class="num">Profit</th><th scope="col" class="barcol opt"><span class="sr">Share</span></th></tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody>'
+            f'<tfoot><tr><th scope="row">Total</th><td class="num">{tot["sales"]:,}</td><td class="num opt">{money(tot["net"])}</td>'
+            f'<td class="num opt">{money(tot["cost"])}</td><td class="num opt">{money(-tot["lost"]) if tot["lost"] else "<span class=na>none</span>"}</td>'
+            f'<td class="num strong {_signed_cls(tot["profit"])}">{money(tot["profit"], True)}</td><td class="opt"></td></tr></tfoot>'
+            f'</table></div></div>')
+    parts.append(
+        '<section class="block"><div class="blockhead stmthead"><div><h2>What each approach made</h2>'
+        '<p class="lede">From your Auction House mail: every sale after the cut, minus what you paid and the deposits you lost.</p></div>'
+        f'<div class="seg" role="group" aria-label="Period">{seg}</div></div>{"".join(stmts)}'
+        '<p class="fine">Flips and raid holds use what you actually paid. Crafts use today\'s mat prices, so they are estimates. '
+        'Farmed and looted items count as free. The neutral AH figure is already inside the approaches above.</p></section>')
+
+    # daily profit
+    days = pr["daily"]
+    peak = max((abs(d["profit"]) for d in days), default=0) or 1
+    pos_peak = max((d["profit"] for d in days), default=0)
+    neg_peak = min((d["profit"] for d in days), default=0)
+    span = (pos_peak - neg_peak) or 1
+    zero = pos_peak / span * 100
+    W, gap = 30, 0.18
+    bars = []
+    for n, d in enumerate(days):
+        v = d["profit"]
+        h = abs(v) / span * 100
+        y = zero - h if v >= 0 else zero
+        date = time.strftime("%a %d %b", time.gmtime(d["day"] * 86400))
+        cls = "neg" if v < 0 else "pos"
+        bars.append(f'<g class="day" data-d="{esc(date)}" data-v="{v}">'
+                    f'<rect class="hit" x="{n}" y="0" width="1" height="100"></rect>'
+                    + (f'<rect class="b {cls}" x="{n + gap / 2:.2f}" y="{y:.2f}" width="{1 - gap:.2f}" height="{max(h, 0.6):.2f}" rx="0.12"></rect>' if v else "")
+                    + '</g>')
+    best = max(days, key=lambda d: d["profit"])
+    parts.append(
+        '<section class="block"><div class="blockhead"><h2>Profit by day</h2>'
+        f'<p class="lede">Last 30 days, by the day the mail arrived. Best day: <strong>{money(best["profit"], True)}</strong> '
+        f'on {time.strftime("%d %b", time.gmtime(best["day"] * 86400))}.</p></div>'
+        '<div class="daily" id="daily">'
+        f'<svg viewBox="0 0 {W} 100" preserveAspectRatio="none" role="img" aria-label="Profit per day for the last 30 days">'
+        f'<line class="zero" x1="0" x2="{W}" y1="{zero:.2f}" y2="{zero:.2f}"></line>{"".join(bars)}</svg>'
+        f'<div class="dailyaxis"><span>{time.strftime("%d %b", time.gmtime(days[0]["day"] * 86400))}</span>'
+        f'<span>top {money(pos_peak)}</span><span>today</span></div>'
+        '<div class="tip" id="daily-tip" hidden></div></div></section>')
+
+    # items that keep coming back
+    if pr["relist"]:
+        lis = "".join(
+            f'<li>{it(e)}<span class="sub">{e["rate"] * 100:.0f}% of what you listed sold, over {e["listings"]} listings</span>'
+            f'<span class="num neg">{money(-e["lost"])}</span></li>' for e in pr["relist"][:6])
+        parts.append('<section class="block attention"><div class="blockhead"><h2>Keeps coming back unsold</h2>'
+                     '<p class="lede">These expire or get cancelled more often than they sell, and every relist costs a deposit. '
+                     'Price them lower, post them shorter, or vendor or craft them instead.</p></div>'
+                     f'<ul class="readylist">{lis}</ul></section>')
+
+    # per item
+    item_rows = [[
+        td(it(e), e["name"]),
+        td(f'{e["listings"]:,}', e["listings"], "num"),
+        td(f'{e["sold"]:,}', e["sold"], "num"),
+        td(f'{e["expired"]:,}' if e["expired"] else '<span class="na">0</span>', e["expired"], "num"),
+        td(f'{e["cancelled"]:,}' if e["cancelled"] else '<span class="na">0</span>', e["cancelled"], "num"),
+        td(f'<span class="{"neg" if e["rate"] < 0.4 else ("pos" if e["rate"] >= 0.75 else "")}">{e["rate"] * 100:.0f}%</span>', e["rate"], "num"),
+        td(money(-e["lost"]) if e["lost"] else '<span class="na">none</span>', -e["lost"], "num"),
+        td(money(e["risk_unit"]) if e["risk_unit"] else '<span class="na">&lt;1c</span>', e["risk_unit"], "num"),
+        td(money(e["profit"], True), e["profit"], "num " + _signed_cls(e["profit"])),
+        td(time.strftime("%d %b", time.localtime(e["last"])) if e["last"] else '<span class="na">not yet</span>', e["last"]),
+    ] for e in pr["items"]]
+    parts.append('<section class="block"><div class="blockhead"><h2>How each item sells</h2>'
+                 '<p class="lede">Sell rate is the share of listed units that sold. <em>Relist cost</em> is the deposit you can expect to '
+                 'lose for each one you sell, and MyFA takes it off every profit figure in the other tabs.</p></div>'
+                 + table("pitems", [("Item", "s", ""), ("Listings", "n", "num"), ("Sold", "n", "num"), ("Expired", "n", "num"),
+                                    ("Cancelled", "n", "num"), ("Sell rate", "n", "num"), ("Deposits lost", "n", "num"),
+                                    ("Relist cost", "n", "num"), ("Profit", "n", "num"), ("Last sold", "n", "")], item_rows, "")
+                 + '</section>')
+
+    # every sale and lost deposit
+    KIND = {"sold": "Sold", "expired": "Expired", "cancelled": "Cancelled"}
+    trade_rows = [[
+        td(time.strftime("%d %b %H:%M", time.localtime(r["t"])), r["t"], "nowrap"),
+        td(it({"id": r["id"], "name": r["name"], "q": r["q_"]}) if r["id"] else esc(r["name"]), r["name"]),
+        td(f'<span class="{"act-c" if r["kind"] == "sold" else "risk-med"}">{KIND.get(r["kind"], r["kind"])}</span>', r["kind"]),
+        td(f'<span class="catname"><i class="sw2" style="background:{CAT_COLOR[r["cat"]]}"></i>{CAT_SHORT[r["cat"]]}</span>', r["cat"], "nowrap"),
+        td("Neutral" if r["ah"] == "neutral" else "Faction", r["ah"]),
+        td(f'{r["qty"]:,}', r["qty"], "num"),
+        td(money(r["net"]) if r["net"] else '<span class="na">none</span>', r["net"], "num"),
+        td((money(r["cost"]) + (' <span class="sub">est.</span>' if r["est"] and r["kind"] == "sold" else "")) if r["cost"] else '<span class="na">none</span>', r["cost"], "num"),
+        td((money(-r["lost"]) + (' <span class="sub">est.</span>' if r["est"] else "")) if r["lost"] else '<span class="na">none</span>', -r["lost"], "num"),
+        td(money(r["profit"], True), r["profit"], "num strong " + _signed_cls(r["profit"])),
+        td(esc(r["char"]), r["char"]),
+    ] for r in pr["trades"]]
+    dep = rk.get("dep_rate") or {}
+    learned = rk.get("dep_learned") or {}
+    parts.append('<section class="block"><div class="blockhead"><h2>Every sale and lost deposit</h2>'
+                 f'<p class="lede">Newest first. Deposits are what MyFA saw you pay when you posted, or an estimate marked <em>est.</em> '
+                 f'Your deposit rate: {dep.get("home", 0) * 100:.0f}% of vendor price on your faction\'s Auction House'
+                 f'{" (learned from your posts)" if learned.get("home") else " (classic rule until MyFA sees you post)"}, '
+                 f'{dep.get("neutral", 0) * 100:.0f}% on the neutral one'
+                 f'{" (learned)" if learned.get("neutral") else ""}. Items with no sales yet assume '
+                 f'{rk.get("p0", 0.6) * 100:.0f}% of listings sell ({esc(rk.get("p0_basis", ""))}).</p></div>'
+                 + table("trades", [("When", "n", ""), ("Item", "s", ""), ("What happened", "s", ""), ("Approach", "s", ""),
+                                    ("AH", "s", ""), ("Qty", "n", "num"), ("After cut", "n", "num"), ("Cost", "n", "num"),
+                                    ("Deposit", "n", "num"), ("Profit", "n", "num"), ("Character", "s", "")], trade_rows, "")
+                 + '</section>')
+    return "".join(parts)
+
+
+def neutral_panel(result, it, sort_or):
+    n = result.get("neutral") or {}
+    cut_home = result["cfg"]["ah_cut"]
+    if not n.get("scan_ts"):
+        return ('<div class="empty"><p>No neutral scan yet. The neutral Auction Houses in <b>Gadgetzan</b>, <b>Booty Bay</b> and '
+                '<b>Everlook</b> are a separate market that both factions share, with a 15% cut and bigger deposits. '
+                'Go to one, open the Auction House, press <b>Full scan</b> in the MyFA panel and type <code>/reload</code>. '
+                'MyFA keeps those prices apart from yours and finds what is worth carrying either way. '
+                'If MyFA doesn\'t recognise one, type <code>/myfa ah neutral</code> while you are there.</p></div>')
+    when = ago(n["scan_ts"], result["now"])
+    if n.get("stale"):
+        return (f'<div class="empty"><p>Your neutral scan is from {esc(when)}, too old to trade on. '
+                'Scan the neutral Auction House again (Gadgetzan, Booty Bay or Everlook) and type <code>/reload</code>.</p></div>')
+    head = (f'<p class="lede neutralstat">Neutral scan {esc(when)}, {n["items"]:,} items. Its cut is {n["cut"] * 100:g}% against '
+            f'{cut_home * 100:g}% at home, and deposits there run about five times higher. Both are already taken off every figure below.</p>')
+
+    def trade_rows(rows):
+        return [[
+            td(it(r), r["name"]),
+            td(money(r["avg"]), r["avg"], "num"),
+            td(money(r["max"]), r["max"], "num"),
+            td(f'{r["qty"]:,}', r["qty"], "num"),
+            td(money(r["sell"]), r["sell"], "num"),
+            td(money(r["profit"], True), r["profit"], "num pos"),
+            td(f'{r["roi"] * 100:.0f}%', r["roi"], "num"),
+            td(f'{r["listed"]:,}', r["listed"], "num"),
+            td(f'{r["nlisted"]:,}', r["nlisted"], "num"),
+            td(esc(r["why"]), None, "why"),
+        ] for r in rows]
+
+    cols = lambda buy_at, sell_at: [  # noqa: E731
+        ("Item", "s", ""), (f"Avg buy ({buy_at})", "n", "num"), ("Buy up to", "n", "num"), ("Qty", "n", "num"),
+        (f"Sell at ({sell_at})", "n", "num"), ("Profit", "n", "num"), ("ROI", "n", "num"), ("Listed at home", "n", "num"),
+        ("Listed neutral", "n", "num"), ("Why", "s", "why")]
+    sell_rows = [[
+        td(it(r), r["name"]),
+        td(f'{r["qty"]:,}', r["qty"], "num"),
+        td(esc(r["loc"]), r["loc"]),
+        td(money(r["price"]), r["price"], "num"),
+        td(money(r["home"]), r["home"], "num"),
+        td(money(r["value"]), r["value"], "num strong"),
+        td(money(r["extra"], True), r["extra"], "num pos"),
+        td(f'{r["nlisted"]:,}', r["nlisted"], "num"),
+        td(esc(r["why"]), None, "why"),
+    ] for r in n["sell"]]
+    return head + (
+        '<section class="block"><div class="blockhead"><h2>Buy on the neutral AH, sell at home</h2>'
+        '<p class="lede">Cheaper there than on your faction\'s Auction House. Buy while you\'re there, then carry or mail them home. '
+        'In game these show on the Buy tab when you open a neutral Auction House.</p></div>'
+        + table("n-tohome", cols("neutral", "home"), trade_rows(n["tohome"]),
+                "Nothing on the neutral AH is cheap enough to bring home right now.")
+        + '</section><section class="block"><div class="blockhead"><h2>Buy here, sell on the neutral AH</h2>'
+        '<p class="lede">Cheap at home and dear on the neutral side, even after its 15% cut. Neutral markets are small, '
+        'so quantities are capped to what it can take. These are on your normal Buy tab, marked TO NEUTRAL.</p></div>'
+        + table("n-toneutral", cols("home", "neutral"), trade_rows(n["toneutral"]),
+                "Nothing is worth carrying to the neutral AH right now.")
+        + '</section><section class="block"><div class="blockhead"><h2>Sell what you own on the neutral AH</h2>'
+        '<p class="lede">Things on your characters that fetch clearly more there than their best use at home. '
+        'Posting there costs more if they don\'t sell, so only big gaps are listed.</p></div>'
+        + table("n-sell", [("Item", "s", ""), ("Qty", "n", "num"), ("Where", "s", ""), ("Post at", "n", "num"),
+                           ("Best at home", "n", "num"), ("Neutral, after cut", "n", "num"), ("Extra", "n", "num"),
+                           ("Listed neutral", "n", "num"), ("Why", "s", "why")], sell_rows,
+                "Nothing you own sells for clearly more on the neutral AH.")
+        + '</section>')
+
+
 def build(result, advice=None, config_path=""):
     now = result["now"]
     cfg = result["cfg"]
@@ -401,6 +623,7 @@ def build(result, advice=None, config_path=""):
         td(f'{r["roi"] * 100:.0f}%', r["roi"], "num"),
         td(f'{r["listed"]:,}', r["listed"], "num"),
         td(f'<span class="{RISK[r["risk"]]}">{r["risk"]}</span>', ["none", "low", "medium", "high"].index(r["risk"])),
+        td(f'{r.get("sell_rate", 0) * 100:.0f}%', r.get("sell_rate", 0), "num"),
         td(esc(r["why"]), None, "why"),
     ] for r in result["flips"]]
 
@@ -540,18 +763,27 @@ def build(result, advice=None, config_path=""):
         f"that clears {roi_pct}% profit after the {cut_pct} cut. MyFA alerts you in game and here when it's reached. "
         f"<em>Aim to sell at</em> is the higher of that, the market value and the item's usual high. "
         f"Change the {roi_pct}% in game with <code>/myfa roi 20</code>."))
+    pr = result.get("profit") or {}
+    sales_n = sum(1 for r in pr.get("trades", []) if r["kind"] == "sold")
+    panels.append(("profit", "Profit", sales_n or None, profit_panel(result, it, sort_or),
+                   "What your sales really made, read from your Auction House mail. Purchases close by themselves when they sell."))
+    nt = result.get("neutral") or {}
+    n_count = len(nt.get("tohome", [])) + len(nt.get("toneutral", [])) + len(nt.get("sell", [])) if not nt.get("stale") else 0
+    panels.append(("neutral", "Neutral AH", n_count if nt.get("scan_ts") else None, neutral_panel(result, it, sort_or),
+                   "Gadgetzan, Booty Bay and Everlook: a separate market both factions share. What's worth carrying between it and yours."))
     panels += [
         ("flips", "Flips", len(result["flips"]), table("flips", [
             ("Item", "s", ""), ("Avg buy", "n", "num"), ("Buy up to", "n", "num"), ("Qty", "n", "num"),
             ("Relist at", "n", "num"), ("Profit", "n", "num"), ("ROI", "n", "num"), ("Listed", "n", "num"),
-            ("Risk", "n", ""), ("Why", "s", "why")], flips_rows,
+            ("Risk", "n", ""), ("Sells", "n", "num"), ("Why", "s", "why")], flips_rows,
             "No flips pass your filters right now. With fewer than 3 days of scans, flips come only from price gaps "
             "inside one scan, so scan once a day. Lowering <code>min_profit</code> or raising <code>flip_threshold</code> "
             "in config.json shows more."),
          f"Units listed under {int(cfg['flip_threshold'] * 100)}% of market. Items with fewer than {cfg['min_listed']} listed are thin markets: "
          f"they're marked high risk, listed last, and left off the in-game Buy list. Profit is after the {cut_pct} AH cut, "
          f"capped at {int(cfg['max_supply_share'] * 100)}% of supply and {int(cfg['max_spend_fraction'] * 100)}% of your gold per item. "
-         "Falling items are marked high risk."),
+         "Falling items are marked high risk. <em>Sells</em> is the share of listings MyFA expects to sell, from your own sale mails "
+         "where it has them; profit already subtracts the deposits you'd lose relisting the rest."),
         ("vendor", "Vendor flips", len(result["vendor"]), table("vendor", [
             ("Item", "s", ""), ("Avg buy", "n", "num"), ("Qty", "n", "num"), ("Vendor pays", "n", "num"),
             ("Profit", "n", "num"), ("ROI", "n", "num")], vendor_rows,
@@ -602,7 +834,7 @@ def build(result, advice=None, config_path=""):
     panels_html = "".join(
         f'<section role="tabpanel" id="panel-{pid}" aria-labelledby="tab-{pid}" {"" if n == 0 else "hidden"}>'
         f'<div class="panelhead"><p class="desc">{desc}</p>'
-        f'{"" if pid in ("claude", "analysis", "guide") else f"<label class=filter><span class=sr>Filter {esc(label)}</span><input type=search placeholder=Filter… data-filter=panel-{pid}></label>"}'
+        f'{"" if pid in ("claude", "analysis", "guide", "profit") else f"<label class=filter><span class=sr>Filter {esc(label)}</span><input type=search placeholder=Filter… data-filter=panel-{pid}></label>"}'
         f'</div>{body}</section>'
         for n, (pid, label, count, body, desc) in enumerate(panels))
 
@@ -612,6 +844,7 @@ def build(result, advice=None, config_path=""):
         ("Items", f'{result["item_count"]:,}'),
         ("History", f'{result["history_days"]} days'),
         ("Owned value", money(inv_value) if inv_value else "n/a"),
+        ("Profit, 30 days", money(pr["windows"]["30"]["sum"]["profit"], True) if pr.get("has_data") else "no sales yet"),
         ("Gold" if result["n_chars"] <= 1 else f"Gold, {result['n_chars']} chars", money(result["money"]) if result["money"] else "n/a"),
     ]
     facts_html = "".join(f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in facts)
@@ -826,7 +1059,7 @@ body.live details.chatflow {{ display: block !important; }}
 .readylist li {{ display: flex; align-items: baseline; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line-soft); }}
 .readylist li .num {{ margin-left: auto; font-family: var(--mono); font-variant-numeric: tabular-nums; }}
 .blockhead {{ margin-bottom: 14px; }}
-.block h2 {{ margin: 0 0 6px; font-size: 17px; font-weight: 600; letter-spacing: -0.005em; }}
+.block h2 {{ text-wrap: balance; margin: 0 0 6px; font-size: 17px; font-weight: 600; letter-spacing: -0.005em; }}
 .block h3 {{ margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); }}
 .lede {{ margin: 0; color: var(--muted); max-width: 82ch; }}
 .lede strong {{ color: var(--text); font-weight: 600; }}
@@ -894,6 +1127,36 @@ td.nowrap {{ white-space: nowrap; }}
 .tip div {{ display: flex; justify-content: space-between; gap: 16px; color: var(--muted); }}
 .tip span {{ color: var(--text); font-variant-numeric: tabular-nums; }}
 .tip i {{ display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }}
+.stmthead {{ display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px 24px; }}
+.stmtwin .lede {{ margin: 0 0 12px; }}
+table.stmt th[scope=row] {{ text-align: left; font-weight: 500; padding: 10px 12px; border-bottom: 1px solid var(--line-soft);
+  vertical-align: top; }}
+table.stmt thead th {{ padding: 9px 12px; color: var(--faint); font: 600 12px var(--sans); }}
+table.stmt td {{ padding: 10px 12px; }}
+table.stmt th[scope=row] .sub {{ display: block; font-weight: 400; margin-top: 2px; }}
+table.stmt tfoot th, table.stmt tfoot td {{ background: var(--raise); border-top: 1px solid var(--line); border-bottom: 0;
+  font-weight: 600; }}
+.catname {{ display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }}
+.sw2 {{ width: 10px; height: 10px; border-radius: 3px; flex: none; }}
+th.barcol, td.barcell {{ width: 22%; min-width: 120px; }}
+td.barcell {{ vertical-align: middle; }}
+.hbar {{ display: block; height: 10px; width: var(--w); min-width: 2px; border-radius: 0 4px 4px 0; background: var(--c); }}
+.hbar.neg {{ background: var(--neg); opacity: .8; }}
+.daily {{ position: relative; max-width: 980px; }}
+.daily svg {{ display: block; width: 100%; height: 150px; }}
+.daily .zero {{ stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }}
+.daily .hit {{ fill: transparent; }}
+.daily .b.pos {{ fill: var(--gold); opacity: .85; }}
+.daily .b.neg {{ fill: var(--neg); opacity: .85; }}
+.daily .day:hover .b, .daily .day.on .b {{ opacity: 1; }}
+.daily .day:hover .hit, .daily .day.on .hit {{ fill: rgba(255, 255, 255, .04); }}
+.dailyaxis {{ display: flex; justify-content: space-between; color: var(--faint); font-size: 12px; margin-top: 6px;
+  font-variant-numeric: tabular-nums; }}
+.block.attention {{ border: 1px solid rgba(233, 196, 106, .3); background: rgba(233, 196, 106, .045); border-radius: 8px;
+  padding: 16px 18px 10px; }}
+.readylist li .sub {{ margin-left: 4px; }}
+.neutralstat {{ margin: 0 0 22px; }}
+@media (max-width: 720px) {{ table.stmt .opt {{ display: none; }} table.stmt th[scope=row] .sub {{ display: none; }} }}
 footer {{ margin-top: 28px; color: var(--faint); font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 6px 24px; }}
 @media (prefers-reduced-motion: reduce) {{ * {{ transition: none !important; }} }}
 @media (max-width: 720px) {{ .wrap {{ padding: 18px 14px 36px; }} .filter input {{ width: 100%; }} }}
@@ -944,7 +1207,7 @@ footer {{ margin-top: 28px; color: var(--faint); font-size: 12.5px; display: fle
   }});
   try {{ const saved = document.getElementById(localStorage.getItem('myfa-tab')); if (saved) select(saved); }} catch (e) {{}}
 
-  document.querySelectorAll('table').forEach(table => {{
+  document.querySelectorAll('table:not([data-nosort])').forEach(table => {{
     const ths = [...table.querySelectorAll('th')];
     ths.forEach((th, col) => th.querySelector('button').addEventListener('click', () => {{
       const asc = th.getAttribute('aria-sort') === 'descending';
@@ -964,6 +1227,36 @@ footer {{ margin-top: 28px; color: var(--faint); font-size: 12.5px; display: fle
       rows.forEach(r => body.appendChild(r));
     }}));
   }});
+
+  document.querySelectorAll('[data-win]').forEach(btn => btn.addEventListener('click', () => {{
+    const w = btn.dataset.win;
+    btn.parentElement.querySelectorAll('[data-win]').forEach(b => b.setAttribute('aria-pressed', b === btn));
+    document.querySelectorAll('.stmtwin').forEach(el => {{ el.hidden = el.dataset.window !== w; }});
+    try {{ localStorage.setItem('myfa-win', w); }} catch (e) {{}}
+  }}));
+  try {{ const w = localStorage.getItem('myfa-win'); const b = w && document.querySelector('[data-win="' + w + '"]'); if (b) b.click(); }} catch (e) {{}}
+
+  const daily = document.getElementById('daily');
+  if (daily) {{
+    const tip = document.getElementById('daily-tip');
+    const fmtMoney = v => {{
+      const a = Math.abs(v), g = Math.floor(a / 10000), s = Math.floor(a % 10000 / 100), c = a % 100;
+      const body = g ? g.toLocaleString() + 'g ' + String(s).padStart(2, '0') + 's' : s ? s + 's ' + String(c).padStart(2, '0') + 'c' : c + 'c';
+      return (v < 0 ? '\u2212' : v > 0 ? '+' : '') + body;
+    }};
+    const days = [...daily.querySelectorAll('.day')];
+    const show = (g) => {{
+      days.forEach(d => d.classList.toggle('on', d === g));
+      const v = +g.dataset.v;
+      tip.innerHTML = '<b>' + g.dataset.d + '</b><div>Profit <span class="' + (v < 0 ? 'neg' : v > 0 ? 'pos' : '') + '">' + fmtMoney(v) + '</span></div>';
+      tip.hidden = false;
+      const box = daily.getBoundingClientRect(), r = g.querySelector('.hit').getBoundingClientRect();
+      const x = Math.min(Math.max(r.left - box.left + r.width / 2 - tip.offsetWidth / 2, 0), box.width - tip.offsetWidth);
+      tip.style.left = x + 'px'; tip.style.top = '-8px'; tip.style.transform = 'translateY(-100%)';
+    }};
+    days.forEach(g => g.addEventListener('pointerenter', () => show(g)));
+    daily.addEventListener('pointerleave', () => {{ tip.hidden = true; days.forEach(d => d.classList.remove('on')); }});
+  }}
 
   document.querySelectorAll('[data-filter]').forEach(input => input.addEventListener('input', () => {{
     const q = input.value.trim().toLowerCase();
@@ -1036,8 +1329,8 @@ CHART_JS = r"""
     const i = byName[pick.value.trim().toLowerCase()];
     if (i) { current = i; hoverIdx = null; render(); }
   });
-  document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
-    document.querySelectorAll('.seg button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  document.querySelectorAll('.seg button[data-range]').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('.seg button[data-range]').forEach(x => x.setAttribute('aria-pressed', x === b));
     range = +b.dataset.range; hoverIdx = null; render();
   }));
 

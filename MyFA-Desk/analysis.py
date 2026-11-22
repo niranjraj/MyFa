@@ -7,7 +7,10 @@ import statistics
 import time
 from pathlib import Path
 
+import pnl
+
 DAY = 86400
+NEUTRAL_SUFFIX = "-NeutralAH"   # the addon stores neutral (goblin) Auction House scans under "<realm>-NeutralAH"
 
 # Skill needed to gather (classic values; Forever may differ for some nodes and its new herbs aren't known yet)
 GATHER_SKILL = {
@@ -152,8 +155,13 @@ def analyse(sv, history: History, cfg, now=None):
     realms = db.get("realms") or {}
     if not realms:
         return None
-    realm_key = cfg.get("realm") or max(realms, key=lambda k: realms[k].get("lastScan") or 0)
+    home_keys = [k for k in realms if not str(k).endswith(NEUTRAL_SUFFIX)]
+    if not home_keys:
+        return None   # only a neutral scan so far: your own faction's Auction House comes first
+    realm_key = cfg.get("realm") if cfg.get("realm") in home_keys else max(home_keys, key=lambda k: realms[k].get("lastScan") or 0)
     realm = realms[realm_key]
+    neutral_key = realm_key.rpartition("-")[0] + NEUTRAL_SUFFIX
+    neutral_realm = realms.get(neutral_key)
     for k, r in realms.items():
         history.ingest(k, r)
 
@@ -164,6 +172,8 @@ def analyse(sv, history: History, cfg, now=None):
         vendor_buy[int(k)] = int(v)
 
     cut = float(cfg["ah_cut"])
+    ids_by_name = {str(m.get("n")).lower(): i for i, m in meta.items() if m.get("n")}
+    riskm = pnl.RiskModel(db, meta, cfg, ids_by_name)
     today = now // DAY
     series = history.series(realm_key, today - int(cfg["chart_days"]))
     trends = {i: trend(p) for i, p in series.items()}
@@ -251,7 +261,8 @@ def analyse(sv, history: History, cfg, now=None):
         units = min(units, cap)
         if units <= 0:
             continue
-        net = ref * (1 - cut) - avg
+        risk_u = riskm.per_unit(i, "home")
+        net = ref * (1 - cut) - avg - risk_u
         profit = int(net * units)
         roi = net / avg if avg else 0
         if profit < cfg["min_profit"] or roi < cfg["min_roi"]:
@@ -270,7 +281,8 @@ def analyse(sv, history: History, cfg, now=None):
             "why": (f"Thin market: only {total} listed, so it may take a long time to sell at {fmt(ref)}. "
                     f"Only for patience or your own use." if thin else
                     f"{units} listed under {int(cfg['flip_threshold'] * 100)}% of market ({basis}). "
-                    f"Relist at {fmt(ref)}; {int(cut * 100)}% AH cut included."),
+                    f"Relist at {fmt(ref)}; {int(cut * 100)}% AH cut included.") + riskm.note(i, "home", units),
+            "risk_unit": int(risk_u), "sell_rate": round(riskm.rate(i), 2),
         })
         if thin:
             flips[-1]["risk"] = "high"
@@ -325,7 +337,7 @@ def analyse(sv, history: History, cfg, now=None):
     def raw_value(i):
         """Per-unit value of selling an item as it is: max of AH (after cut) and vendor."""
         price, _ = sell_price(i)
-        ah = price * (1 - cut) if price else 0
+        ah = price * (1 - cut) - riskm.per_unit(i, "home") if price else 0
         v = (meta.get(i) or {}).get("v") or 0
         return max(ah, v)
 
@@ -354,7 +366,7 @@ def analyse(sv, history: History, cfg, now=None):
         if sell is None:
             sell = market(out_id)
         n_out = (float(r.get("qa", 1)) + float(r.get("qb", r.get("qa", 1)))) / 2
-        out_net = sell * n_out * (1 - cut) if sell else 0
+        out_net = max(0, (sell * (1 - cut) - riskm.per_unit(out_id, "home")) * n_out) if sell else 0
         out_vendor = ((meta.get(out_id) or {}).get("v") or 0) * n_out
         value = int(max(out_net, out_vendor))
         can_make = min((owned.get(rg, 0) // q for rg, q in reagents), default=0) if reagents else 0
@@ -438,7 +450,7 @@ def analyse(sv, history: History, cfg, now=None):
     for i, e in stock.items():
         n = owned[i]
         price, note = sell_price(i)
-        ah = price * (1 - cut) if price else 0
+        ah = max(0, price * (1 - cut) - riskm.per_unit(i, "home")) if price else 0
         v = (meta.get(i) or {}).get("v") or 0
         craft = best_craft_use(i)
         options = {"ah": ah, "vendor": v}
@@ -530,7 +542,7 @@ def analyse(sv, history: History, cfg, now=None):
             continue  # trending steadily up or down: not a range to flip in
         listed = s.get("q", 0)
         zone = "buy" if s["m"] <= b["buy"] else ("sell" if s["m"] >= b["sell"] else "mid")
-        per_unit = b["sell"] * (1 - cut) - b["buy"]
+        per_unit = b["sell"] * (1 - cut) - b["buy"] - riskm.per_unit(i, "home")
         bands.append({
             "id": i, "name": name(i), "q": quality(i), "now": s["m"], "buy": b["buy"], "sell": b["sell"],
             "spread": round(b["spread"], 3), "vol": round(b["vol"], 3), "days": b["days"], "listed": listed,
@@ -654,12 +666,13 @@ def analyse(sv, history: History, cfg, now=None):
     for r in raid_plan:
         if r["action"] == "Buy" and r["qty"] > 0 and r["id"]:
             sell_ref = r["sell"] or int((r["market"] or r["now"]) * 1.15)
-            profit = int((sell_ref * (1 - cut) - r["now"]) * r["qty"])
+            profit = int((sell_ref * (1 - cut) - r["now"] - riskm.per_unit(r["id"], "home")) * r["qty"])
             if profit > 0 and not any(f["id"] == r["id"] for f in flips):
                 flips.append({
                     "id": r["id"], "name": r["name"], "q": r["q"], "kind": "raid", "max": r["buy"] or r["now"],
                     "qty": r["qty"], "avg": r["now"], "sell": sell_ref, "profit": profit, "roi": 0, "listed": r["listed"],
-                    "days": 0, "risk": "medium",
+                    "days": 0, "risk": "medium", "risk_unit": int(riskm.per_unit(r["id"], "home")),
+                    "sell_rate": round(riskm.rate(r["id"]), 2),
                     "why": f"Raid stock-up for {', '.join(r['raids'])} ({r['days_left']} days). Sell launch week near {fmt(sell_ref)}.",
                 })
 
@@ -677,10 +690,23 @@ def analyse(sv, history: History, cfg, now=None):
 
     # ---- my flips: what you bought and still hold, on every character ------------------
     roi = float((db.get("settings") or {}).get("roi") or cfg.get("flip_roi", 0.15))
+    def lot_left(e):
+        return int(e.get("q") or 0) - int(e.get("s") or 0)
+
     buys_by = {}
     for e in ledger:
-        if e.get("k") == "buy" and not e.get("x") and e.get("t", 0) >= now - 90 * DAY and e.get("id") and e.get("q") and e.get("u"):
+        if (e.get("k") == "buy" and not e.get("x") and e.get("t", 0) >= now - 90 * DAY and e.get("id") and e.get("q")
+                and e.get("u") and lot_left(e) > 0):
             buys_by.setdefault(int(e["id"]), []).append(e)
+
+    # what's listed on an Auction House right now (still yours until it sells)
+    listed, listed_places = {}, {}
+    for key, c in char_items:
+        who = key.split("-")[0]
+        for kind, l in (c.get("listed") or {}).items():
+            for li, n in ((l or {}).get("items") or {}).items():
+                listed[int(li)] = listed.get(int(li), 0) + int(n)
+                listed_places.setdefault(int(li), []).append((who, "on neutral AH" if kind == "neutral" else "on AH", int(n)))
     positions = []
     all_chars = db.get("chars") or {}
     for i, buys in buys_by.items():
@@ -690,16 +716,18 @@ def analyse(sv, history: History, cfg, now=None):
             if e.get("src") != "mail" and not e.get("m"):
                 c = all_chars.get(e.get("c")) if e.get("c") else (chars[0] if chars else None)
                 if not c or e.get("t", 0) > (c.get("mailT") or 0):
-                    transit += e["q"]
+                    transit += lot_left(e)
         if transit:
             places.setdefault(i, []).append(("on its way", "mail", transit))
-        hold = min(owned.get(i, 0) + transit, sum(e["q"] for e in buys))
+        for place in listed_places.get(i, []):
+            places.setdefault(i, []).append(place)
+        hold = min(owned.get(i, 0) + listed.get(i, 0) + transit, sum(lot_left(e) for e in buys))
         if hold <= 0:
             continue
         buys.sort(key=lambda e: e["t"], reverse=True)  # oldest sold first, so you hold the newest
         need, spent = hold, 0
         for e in buys:
-            take = min(need, e["q"])
+            take = min(need, lot_left(e))
             spent += take * e["u"]
             need -= take
             if need <= 0:
@@ -707,11 +735,12 @@ def analyse(sv, history: History, cfg, now=None):
         cost = spent / hold
         s_ = scan.get(i)
         now_p = s_["m"] if s_ else None
-        target = math.ceil(cost * (1 + roi) / (1 - cut))
+        risk_u = riskm.per_unit(i, "home")
+        target = math.ceil((cost * (1 + roi) + risk_u) / (1 - cut))
         mk = market(i)
         b = band(i)
         suggest = max(target, b["sell"] if b else 0, mk or 0)
-        pl = int((now_p * (1 - cut) - cost) * hold) if now_p else None
+        pl = int((now_p * (1 - cut) - cost - risk_u) * hold) if now_p else None
         if now_p is None:
             status = "Not listed"
         elif now_p >= target:
@@ -734,10 +763,19 @@ def analyse(sv, history: History, cfg, now=None):
             "id": i, "name": name(i), "q": quality(i), "qty": hold, "cost": int(cost), "now": now_p, "market": mk,
             "target": target, "suggest": int(suggest), "pl": pl, "status": status, "where": where_text(i),
             "since": buys[-1]["t"], "trend": t["slope"] if t else None, "invested": int(cost * hold),
-            "ready_value": int((target * (1 - cut) - cost) * hold), "note": note,
+            "ready_value": int((target * (1 - cut) - cost - risk_u) * hold), "note": note,
+            "listed": listed.get(i, 0), "risk_unit": int(risk_u),
         })
     order = {"Sell now": 0, "Hold": 1, "Under water": 2, "Not listed": 3}
     positions.sort(key=lambda r: (order[r["status"]], -(r["pl"] or -10**12)))
+
+    # ---- neutral Auction House: a separate market both factions share ---------------------------------
+    neutral = neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, hist, meta, name, quality,
+                             riskm, cut, budget, inventory, flips)
+
+    # ---- realized profit from your sales -------------------------------------------------------------
+    craft_unit_cost = {r["id"]: r["cost"] / max(r["n_out"], 1) for r in crafts if r["cost"] and not r["missing"]}
+    profit = pnl.profit_report(db, meta, now, set(raid_by_id), craft_unit_cost, ids_by_name, riskm)
 
     # ---- characters: level, class, professions (for the Guide) -------------------------------
     profiles = []
@@ -774,6 +812,17 @@ def analyse(sv, history: History, cfg, now=None):
     real_flips = [r for r in flips if r["kind"] in ("flip", "raid")]
     for r in real_flips[:3]:
         move("flip", f"Buy {r['qty']} {r['name']} at up to {fmt(r['max'])} each and resell", r["profit"], r["why"])
+    for key, verb in (("tohome", "on the neutral AH and sell them at home"), ("toneutral", "here and sell them on the neutral AH")):
+        rows = neutral[key]
+        if rows:
+            move("flip", f"Buy {rows[0]['qty']} {rows[0]['name']} {verb}" + (f" (+{len(rows) - 1} more)" if len(rows) > 1 else ""),
+                 sum(r["profit"] for r in rows), rows[0]["why"])
+    if neutral["sell"]:
+        move("sell", f"Sell {len(neutral['sell'])} item type{'s' if len(neutral['sell']) != 1 else ''} on the neutral AH, starting with {neutral['sell'][0]['name']}",
+             sum(r["extra"] for r in neutral["sell"]), "Extra over their best use at home, after the 15% cut.")
+    for e in profit["relist"][:2]:
+        move("fix", f"Stop relisting {e['name']} at that price: only {e['rate'] * 100:.0f}% of what you listed sold", None,
+             f"{e['listings']} listings so far, {fmt(e['lost'])} lost in deposits. Price it lower or sell it another way.")
     if vendor:
         move("flip", f"Buy {len(vendor)} underpriced item type{'s' if len(vendor) != 1 else ''} and sell to a vendor", sum(r["profit"] for r in vendor),
              "Vendor flips: no risk.")
@@ -796,7 +845,7 @@ def analyse(sv, history: History, cfg, now=None):
             if mx and skill is not None and skill >= mx - 5 and mx < 300:
                 move("skill", f"{p_['name']}'s {prof} is at {skill}/{mx}: visit a trainer for the next rank", None,
                      "You stop gaining skill at the cap.")
-    order_k = {"sell": 0, "craft": 1, "flip": 2, "gather": 3, "skill": 4}
+    order_k = {"sell": 0, "craft": 1, "flip": 2, "fix": 3, "gather": 4, "skill": 5}
     with_gold = sorted([m for m in next_moves if m["gold"]], key=lambda m: -m["gold"])
     advice = sorted([m for m in next_moves if not m["gold"]], key=lambda m: order_k[m["kind"]])
     # skill and gathering advice has no gold figure, so keep room for it
@@ -820,7 +869,151 @@ def analyse(sv, history: History, cfg, now=None):
         "manual": manual, "names": {(m.get("n") or "").lower(): i for i, m in meta.items() if m.get("n")},
         "profiles": profiles, "next_moves": next_moves,
         "mail_seen": any(c.get("mailT") for c in chars),
+        "neutral": neutral, "profit": profit,
+        "risk": {"p0": riskm.p0, "p0_basis": riskm.p0_basis, "dep_rate": riskm.dep_rate, "dep_learned": riskm.dep_learned,
+                 "units": {i: int(riskm.per_unit(i, "home")) for i in {r["id"] for r in positions} | {r["id"] for r in flips}
+                           if riskm.per_unit(i, "home") >= 1}},
     }
+
+
+def neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, hist, meta, name, quality, risk, cut,
+                   budget, inventory, flips):
+    """Trades between your faction's Auction House and the neutral one (Gadgetzan, Booty Bay, Everlook).
+
+    tohome:    cheap on the neutral AH, worth more at home (buy there, carry or mail it home, sell at home)
+    toneutral: cheap at home, worth more on the neutral AH after its 15% cut and bigger deposits
+    sell:      things you own that fetch more on the neutral AH than their best use at home
+    """
+    ncut = float(cfg.get("neutral_cut", 0.15))
+    out = {"key": neutral_key, "cut": ncut, "scan_ts": None, "age_days": None, "items": 0, "stale": False,
+           "tohome": [], "toneutral": [], "sell": []}
+    if not neutral_realm or not neutral_realm.get("items"):
+        return out
+    nscan = {int(k): v for k, v in neutral_realm["items"].items()}
+    n_ts = int(neutral_realm.get("lastScan") or 0)
+    age = (now - n_ts) / DAY
+    out.update(scan_ts=n_ts, age_days=round(age, 1), items=len(nscan))
+    if age > float(cfg.get("neutral_max_age_days", 7)):
+        out["stale"] = True
+        return out
+    nseries = history.series(neutral_key, today - int(cfg["history_days"]))
+    min_roi, min_profit = float(cfg["min_roi"]), int(cfg["min_profit"])
+    share = float(cfg["max_supply_share"])
+    thin = max(3, int(cfg["min_listed"]) // 2)
+    age_note = f" Neutral prices are {age:.0f} days old; rescan there before you go." if age >= 2 else ""
+
+    def ref(s_, series_pts):
+        if not s_:
+            return None
+        wall = _wall(s_.get("l") or [], s_.get("q") or 0)
+        vals = [p_[2] or p_[1] for p_ in series_pts if (p_[2] or p_[1])]
+        if len(vals) >= 3 and wall:
+            return min(statistics.median(vals), wall)
+        return wall or robust_market(s_)
+
+    def home_ref(i):
+        s_ = scan.get(i)
+        if not s_:
+            return None
+        wall = _wall(s_.get("l") or [], s_.get("q") or 0)
+        h, days = hist(i)
+        return min(h, wall) if days >= 3 and wall else wall
+
+    def skip_gear(i):
+        return (meta.get(i) or {}).get("e") and not cfg["include_gear"]
+
+    # buy on the neutral AH, sell at home
+    for i, ns_ in nscan.items():
+        hs = scan.get(i)
+        if skip_gear(i) or not hs or (hs.get("q") or 0) < thin:
+            continue
+        sell = home_ref(i)
+        if not sell:
+            continue
+        per_unit = sell * (1 - cut) - risk.per_unit(i, "home")
+        units, cost, top = _units_below(ns_.get("l") or [], per_unit / (1 + min_roi))
+        if units <= 0:
+            continue
+        cap = max(1, int((hs.get("q") or 0) * share))
+        avg = cost / units
+        if budget != float("inf") and avg > 0:
+            cap = min(cap, int(budget // avg))
+        units = min(units, cap)
+        if units <= 0:
+            continue
+        profit = int((per_unit - avg) * units)
+        roi = (per_unit - avg) / avg if avg else 0
+        if profit < min_profit or roi < min_roi:
+            continue
+        out["tohome"].append({
+            "id": i, "name": name(i), "q": quality(i), "kind": "tohome", "max": int(min(top, avg * 1.02)), "qty": units,
+            "avg": int(avg), "sell": int(sell), "profit": profit, "roi": round(roi, 3), "listed": hs.get("q", 0),
+            "nlisted": ns_.get("q", 0),
+            "why": (f"{units} on the neutral AH under {fmt(per_unit / (1 + min_roi))}; your Auction House holds it at "
+                    f"{fmt(sell)}. Buy at the neutral AH, then carry or mail it home and post there. "
+                    f"Your {int(cut * 100)}% cut included." + risk.note(i, "home", units) + age_note),
+        })
+
+    # buy at home, sell on the neutral AH
+    flip_profit = {r["id"]: r["profit"] for r in flips}
+    for i, hs in scan.items():
+        ns_ = nscan.get(i)
+        if skip_gear(i) or not ns_ or (ns_.get("q") or 0) < thin:
+            continue
+        sell = ref(ns_, nseries.get(i, []))
+        if not sell:
+            continue
+        per_unit = sell * (1 - ncut) - risk.per_unit(i, "neutral")
+        units, cost, top = _units_below(hs.get("l") or [], per_unit / (1 + min_roi))
+        if units <= 0:
+            continue
+        cap = max(1, int((ns_.get("q") or 0) * share))   # neutral markets are small: don't flood them
+        avg = cost / units
+        if budget != float("inf") and avg > 0:
+            cap = min(cap, int(budget // avg))
+        units = min(units, cap)
+        if units <= 0:
+            continue
+        profit = int((per_unit - avg) * units)
+        roi = (per_unit - avg) / avg if avg else 0
+        if profit < min_profit or roi < min_roi or profit <= flip_profit.get(i, 0):
+            continue
+        out["toneutral"].append({
+            "id": i, "name": name(i), "q": quality(i), "kind": "toneutral", "max": int(min(top, avg * 1.02)), "qty": units,
+            "avg": int(avg), "sell": int(sell), "profit": profit, "roi": round(roi, 3), "listed": hs.get("q", 0),
+            "nlisted": ns_.get("q", 0),
+            "why": (f"{units} here under {fmt(per_unit / (1 + min_roi))}; the neutral AH holds it at {fmt(sell)} "
+                    f"({ns_.get('q', 0)} listed). After its {int(ncut * 100)}% cut that still pays. "
+                    f"Take them to Gadgetzan, Booty Bay or Everlook, or mail them to a character parked there."
+                    + risk.note(i, "neutral", units) + age_note),
+        })
+
+    # things you own that pay more on the neutral AH
+    for r in inventory:
+        i = r["id"]
+        ns_ = nscan.get(i)
+        if not ns_ or (ns_.get("q") or 0) < thin or not r["qty"]:
+            continue
+        sell = ref(ns_, nseries.get(i, []))
+        if not sell:
+            continue
+        post_at = max(int(ns_["m"]), int(sell * 0.95)) if ns_.get("m") else int(sell)
+        per_unit = post_at * (1 - ncut) - risk.per_unit(i, "neutral")
+        best = r["value"] / r["qty"]
+        extra = (per_unit - best) * r["qty"]
+        if per_unit <= best * 1.1 or extra < min_profit / 2:
+            continue
+        out["sell"].append({
+            "id": i, "name": r["name"], "q": r["q"], "qty": r["qty"], "price": post_at, "value": int(per_unit * r["qty"]),
+            "extra": int(extra), "home": int(best * r["qty"]), "loc": r["loc"], "nlisted": ns_.get("q", 0),
+            "why": (f"Post at about {fmt(post_at)} on the neutral AH: {fmt(extra)} more than its best use at home, "
+                    f"after the {int(ncut * 100)}% cut." + risk.note(i, "neutral", r["qty"]) + age_note),
+        })
+    for key in ("tohome", "toneutral"):
+        out[key].sort(key=lambda r: -r["profit"])
+        out[key] = out[key][: int(cfg["max_targets"])]
+    out["sell"].sort(key=lambda r: -r["extra"])
+    return out
 
 
 MANUAL_PATH = Path(__file__).resolve().parent / "data" / "manual.json"
@@ -882,7 +1075,8 @@ def targets_table(result):
     keys = ("id", "name", "kind", "max", "qty", "profit", "sell", "why")
     cfg = result["cfg"]
     flips = [r for r in result["flips"] if r["kind"] != "snipe" or cfg.get("include_snipes")]
-    buys = [{k: r[k] for k in keys} for r in result["vendor"] + flips]
+    toneutral = (result.get("neutral") or {}).get("toneutral") or []
+    buys = [{k: r[k] for k in keys} for r in result["vendor"] + flips + toneutral]
     buys.sort(key=lambda r: r["profit"], reverse=True)
     sells = [{"id": r["id"], "name": r["name"], "price": r["price"], "qty": r["qty"], "action": r["action"],
               "value": r["value"], "loc": r["loc"], "into": r["into"], "hold": r["hold"], "why": r["note"] or None}
@@ -897,4 +1091,19 @@ def targets_table(result):
         "imports": [{k: m[k] for k in ("mid", "id", "q", "u", "t")} for m in result["manual"].get("adds", [])
                     if m.get("realm", result["realm"]) == result["realm"]],
         "forgets": [{"id": int(k), "t": v} for k, v in (result["manual"].get("forgets") or {}).items()],
+        "risk": result["risk"]["units"],
+        "neutral": neutral_targets(result),
+    }
+
+
+def neutral_targets(result):
+    n = result.get("neutral") or {}
+    if not n.get("scan_ts") or n.get("stale"):
+        return None
+    keys = ("id", "name", "kind", "max", "qty", "profit", "sell", "why")
+    return {
+        "scan": n["scan_ts"], "cut": n["cut"],
+        "buys": [{k: r[k] for k in keys} for r in n["tohome"]],
+        "sells": [{"id": r["id"], "name": r["name"], "price": r["price"], "qty": r["qty"], "action": "ah",
+                   "value": r["value"], "loc": r["loc"], "why": r["why"]} for r in n["sell"]],
     }
