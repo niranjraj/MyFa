@@ -751,7 +751,7 @@ def fmt(copper):
 
 def targets_table(result):
     """The data written to Data/Targets.lua for the addon."""
-    keys = ("id", "name", "kind", "max", "qty", "profit", "why")
+    keys = ("id", "name", "kind", "max", "qty", "profit", "sell", "why")
     cfg = result["cfg"]
     flips = [r for r in result["flips"] if r["kind"] != "snipe" or cfg.get("include_snipes")]
     buys = [{k: r[k] for k in keys} for r in result["vendor"] + flips]

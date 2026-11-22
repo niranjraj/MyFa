@@ -33,7 +33,11 @@ Prefer a terminal? `run_desk.bat` still works the same as before.
 
 ## The in-game panel
 
-The line under the tabs explains each one. The right-hand number means something different on each tab.
+At the top: when you last scanned, how old your targets are, and when the next scan is allowed. Under that, either the **scan progress bar** or a **Next:** line that always says what to do now. The line under the tabs explains each tab, every row has a coloured label (FLIP, VENDOR, RAID, SELL, CRAFT, KEEP, SELL NOW, HOLD...), and hovering a row gives step-by-step instructions.
+
+**Scanning:** press **Full scan** and keep the Auction House open. The bar shows "Asking the server..." with a seconds counter (the server doesn't report progress for this part), then "Reading auctions 45% (12,300 of 27,400)", then "Done". Closing the MyFA panel doesn't stop a scan. Closing the Auction House does, with a message, and so does a server that hasn't answered after 2 minutes. Just press Full scan again.
+
+The right-hand number means something different on each tab.
 
 | Tab | What it shows | The right-hand number |
 |---|---|---|

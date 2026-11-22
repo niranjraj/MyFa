@@ -2,11 +2,27 @@
 local ADDON, ns = ...
 
 local ROWS, ROW_H = 9, 40
-local PANEL_W, PANEL_H = 430, 540
+local PANEL_W, PANEL_H = 430, 566
 local GOLD = { 0.85, 0.71, 0.35 }
 local GREEN = "|cff6fd08a"
 local RED = "|cffe8796b"
 local MUTED = "|cffa9a59a"
+local BLUE = "|cff8fb8f0"
+local GOLDC = "|cffe3bd62"
+local GREY = "|cff9d9d9d"
+
+local function tag(color, text) return color .. text .. "|r  " end
+
+local function num(n)
+    n = math.floor(n or 0)
+    if BreakUpLargeNumbers then return BreakUpLargeNumbers(n) end
+    local s = tostring(n)
+    while true do
+        local k
+        s, k = s:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+        if k == 0 then return s end
+    end
+end
 
 local panel, rows, tabs = nil, {}, {}
 
@@ -158,6 +174,37 @@ local function rowTooltip(self)
     else
         GameTooltip:SetText(e.name or "?")
     end
+    local steps = {}
+    if currentTab == "buys" then
+        if e.kind == "vendor" then
+            steps = { "1. Press Buy, then Confirm (only offered at " .. ns.Money(e.max) .. " each or less).",
+                      "2. Sell them to any vendor.", "Profit: " .. ns.Money(e.profit or 0) .. "." }
+        else
+            steps = { "1. Press Buy. MyFA asks the server for the live price.",
+                      "2. Press Confirm. It's only offered at " .. ns.Money(e.max) .. " each or less.",
+                      "3. Post them again at about " .. ns.Money(e.sell or 0) .. " each" .. (e.kind == "raid" and " in raid week." or "."),
+                      "Expected profit after the cut: " .. ns.Money(e.profit or 0) .. "." }
+        end
+    elseif currentTab == "sells" then
+        if e.action == "ah" then steps = { "Post " .. (e.qty or 0) .. " at " .. ns.Money(e.price) .. " each. Match the lowest price; don't undercut." }
+        elseif e.action == "vendor" then steps = { "Sell to any vendor. The Auction House would pay less after the cut." }
+        elseif e.action == "craft" then steps = { "Use it to craft " .. (e.into or "?") .. ". That's worth more than selling it raw. See the Craft tab." }
+        else steps = { "Keep it for now. MyFA will move it to Sell when it's time." } end
+        if e.loc then steps[#steps + 1] = "Where: " .. e.loc end
+    elseif currentTab == "crafts" then
+        steps = { "Mats cost " .. ns.Money(e.cost) .. ", the result sells for " .. ns.Money(e.value) .. " after the cut.",
+                  "Craft it, then post it at today's lowest price." }
+    elseif currentTab == "mine" then
+        steps = { string.format("You paid %s each for %d.", ns.Money(e.cost), e.qty),
+                  "Lowest now: " .. (e.now and ns.Money(e.now) or "not listed") .. ". MyFA alerts you at " .. ns.Money(e.target) .. ".",
+                  e.ready and "Sell now: post at the lowest price." or "Keep it until the alert.",
+                  "Where: " .. (e.where or "?") }
+    end
+    if #steps > 0 then
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("What to do", 0.89, 0.74, 0.38)
+        for _, line in ipairs(steps) do GameTooltip:AddLine(line, 1, 1, 1, true) end
+    end
     if e.why then
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine(e.why, 0.8, 0.8, 0.8, true)
@@ -223,7 +270,9 @@ local function updateRow(r, e)
     if currentTab == "buys" then
         local left = remaining(e)
         local kind = (e.kind == "vendor" and "  vendor flip") or (e.kind == "raid" and "  raid stock") or ""
-        r.detail:SetText(string.format("buy x%d, max %s each%s%s|r", left, ns.Money(e.max), MUTED, kind))
+        local label = (e.kind == "vendor" and tag(GREEN, "VENDOR")) or (e.kind == "raid" and tag(BLUE, "RAID"))
+            or (e.kind == "snipe" and tag(RED, "SNIPE")) or tag(GOLDC, "FLIP")
+        r.detail:SetText(string.format("%sbuy x%d, max %s each", label, left, ns.Money(e.max)))
         r.profit:SetText(GREEN .. "+" .. ns.Money(e.profit or 0) .. "|r")
         if isCommodity(e.id) then
             r.buy:Show()
@@ -240,30 +289,32 @@ local function updateRow(r, e)
         end
     elseif currentTab == "sells" then
         local what
-        if e.action == "vendor" then what = "sell to a vendor"
-        elseif e.action == "craft" then what = "craft it into " .. (e.into or "?")
-        elseif e.action == "hold" then what = (e.hold == "raid") and "keep for raid week" or "keep, price rising"
-        else what = "post at " .. ns.Money(e.price) .. " each" end
+        if e.action == "vendor" then what = tag(GREY, "VENDOR") .. "sell to a vendor"
+        elseif e.action == "craft" then what = tag(GREEN, "CRAFT") .. "into " .. (e.into or "?")
+        elseif e.action == "hold" then what = tag(BLUE, "KEEP") .. ((e.hold == "raid") and "for raid week" or "price rising")
+        else what = tag(GOLDC, "SELL") .. "post at " .. ns.Money(e.price) .. " each" end
         r.detail:SetText(string.format("%s  %s%s|r", what, MUTED, e.loc or ("x" .. (e.qty or 0))))
         r.profit:SetText(ns.Money(e.value or 0))
         if e.action ~= "ah" then r.search:Hide() end
     elseif currentTab == "mine" then
         local state
         if e.ready then
-            state = GREEN .. "SELL|r  " .. MUTED .. "now " .. "|r" .. ns.Money(e.now)
+            state = tag(GREEN, "SELL NOW") .. "lowest " .. ns.Money(e.now)
+        elseif e.now and e.pl and e.pl < 0 then
+            state = tag(RED, "BELOW COST") .. "alert at " .. ns.Money(e.target)
         elseif e.now then
-            state = MUTED .. "hold, sell at " .. "|r" .. ns.Money(e.target)
+            state = tag(BLUE, "HOLD") .. "alert at " .. ns.Money(e.target)
         else
-            state = MUTED .. "not listed in last scan|r"
+            state = tag(GREY, "NO PRICE") .. "not in last scan"
         end
-        r.detail:SetText(string.format("x%d  %spaid %s|r  %s", e.qty, MUTED, ns.Money(e.cost), state))
+        r.detail:SetText(string.format("%s  %sx%d, paid %s|r", state, MUTED, e.qty, ns.Money(e.cost)))
         if e.pl then
             r.profit:SetText((e.pl >= 0 and GREEN .. "+" or RED) .. ns.Money(e.pl) .. "|r")
         else
             r.profit:SetText("")
         end
     else -- crafts
-        r.detail:SetText(string.format("mats %s  %ssells for %s|r", ns.Money(e.cost), MUTED, ns.Money(e.value)))
+        r.detail:SetText(string.format("%smats %s, sells %s", tag(GREEN, "CRAFT"), ns.Money(e.cost), ns.Money(e.value)))
         local p = e.profit or 0
         r.profit:SetText((p >= 0 and GREEN .. "+" or RED) .. ns.Money(p) .. "|r")
     end
@@ -272,21 +323,77 @@ local function updateRow(r, e)
     end
 end
 
+local function nextStep()
+    local t = targets()
+    local realm = MyFA_DB.realms[ns.RealmKey()]
+    local last = realm and realm.lastScan
+    if not last then
+        return ahOpen() and "Next: press Full scan to read every auction." or "Next: open the Auction House and press Full scan."
+    end
+    if not t or not t.scan or t.scan < last - 5 then
+        if ns.scannedThisSession then
+            return GOLDC .. "Next: type /reload so MyFA Desk can read this scan.|r"
+        end
+        return GOLDC .. "Next: MyFA Desk is reading your scan. Type /reload again in a few seconds.|r"
+            .. MUTED .. " (Desk must be running.)|r"
+    end
+    local ready = 0
+    for _, p in ipairs(ns.Positions()) do if p.ready then ready = ready + 1 end end
+    if ready > 0 then
+        return GREEN .. string.format("%d of your flips %s ready to sell. Open My flips.|r", ready, ready == 1 and "is" or "are")
+    end
+    return "Up to date. " .. MUTED .. "Check Buy for deals and Sell for what to post.|r"
+end
+
+local function setBar(fraction, color, text)
+    local b = panel.bar
+    b:SetValue(math.max(0, math.min(1, tonumber(fraction) or 0)))
+    b:SetStatusBarColor(color[1], color[2], color[3], 0.9)
+    b.text:SetText(text)
+    b:Show()
+    panel.step:Hide()
+end
+
 function ns.RefreshHeader()
     if not panel then return end
     local t = targets()
     local realm = MyFA_DB.realms[ns.RealmKey()]
-    local scanText = ns.scanStatus or ("Scan " .. age(realm and realm.lastScan))
-    local deskText = t and t.generated and ("targets " .. age(t.generated)) or "no targets yet"
-    panel.status:SetText(MUTED .. scanText .. "  ·  " .. deskText .. "|r")
-
     local left = ns.ScanCooldownLeft and ns.ScanCooldownLeft() or 0
+    local parts = { "Last scan " .. age(realm and realm.lastScan) }
+    parts[#parts + 1] = t and t.generated and ("targets " .. age(t.generated)) or "no targets yet"
+    if left > 0 then parts[#parts + 1] = string.format("next scan in %d:%02d", math.floor(left / 60), left % 60) end
+    panel.status:SetText(MUTED .. table.concat(parts, "  ·  ") .. "|r")
+
     if ns.IsScanning and ns.IsScanning() then
         panel.scan:SetText("Scanning"); panel.scan:Disable()
     elseif left > 0 then
         panel.scan:SetText(string.format("%d:%02d", math.floor(left / 60), left % 60)); panel.scan:Disable()
     else
         panel.scan:SetText("Full scan"); panel.scan:SetEnabled(ahOpen() and true or false)
+    end
+
+    local sc = ns.ScanInfo and ns.ScanInfo() or {}
+    local clock = GetTime or time
+    if sc.phase == "waiting" then
+        local secs = math.floor(clock() - (sc.started or clock()))
+        panel.bar.waiting = true
+        setBar(panel.bar:GetValue(), GOLD, string.format("Asking the server for every auction...  %ds", secs))
+    elseif sc.phase == "reading" then
+        panel.bar.waiting = false
+        local f = (sc.total or 0) > 0 and (sc.done or 0) / sc.total or 0
+        setBar(f, GOLD, string.format("Reading auctions  %d%%   (%s of %s)", math.floor(f * 100), num(sc.done), num(sc.total)))
+    elseif sc.phase == "done" and ns.scannedThisSession and time() - (sc.finished or 0) < 600
+        and not (t and t.scan and realm and t.scan >= (realm.lastScan or 0) - 5) then
+        panel.bar.waiting = false
+        setBar(1, { 0.44, 0.82, 0.54 }, string.format("Done: %s auctions, %s items. Type /reload to send it to Desk.", num(sc.auctions), num(sc.items)))
+    elseif sc.phase == "cancelled" and time() - (sc.finished or 0) < 120 then
+        panel.bar.waiting = false
+        setBar(1, { 0.91, 0.47, 0.42 }, "Scan stopped. Press Full scan to try again.")
+    else
+        panel.bar.waiting = false
+        panel.bar:Hide()
+        panel.step:SetText(nextStep())
+        panel.step:Show()
     end
 end
 
@@ -349,6 +456,31 @@ local function build()
     panel.status = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     panel.status:SetPoint("TOPLEFT", panel.title, "BOTTOMLEFT", 0, -4)
 
+    -- progress bar while scanning; otherwise a "Next:" line telling you what to do
+    local bar = CreateFrame("StatusBar", nil, panel)
+    bar:SetSize(PANEL_W - 28, 18)
+    bar:SetPoint("TOPLEFT", 14, -56)
+    bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+    bar:SetMinMaxValues(0, 1)
+    bar.bg = bar:CreateTexture(nil, "BACKGROUND")
+    bar.bg:SetAllPoints()
+    bar.bg:SetColorTexture(1, 1, 1, 0.07)
+    bar.text = bar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    bar.text:SetPoint("CENTER")
+    bar.text:SetShadowOffset(1, -1)
+    bar:SetScript("OnUpdate", function(self, elapsed)
+        if self.waiting then  -- the server doesn't say how far along it is: show a moving fill
+            self.phase = ((self.phase or 0) + (elapsed or 0) * 0.5) % 1
+            self:SetValue(self.phase)
+        end
+    end)
+    bar:Hide()
+    panel.bar = bar
+    panel.step = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    panel.step:SetPoint("TOPLEFT", 14, -59)
+    panel.step:SetWidth(PANEL_W - 28)
+    panel.step:SetJustifyH("LEFT")
+
     local close = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", 2, 2)
 
@@ -361,23 +493,30 @@ local function build()
     for _, def in ipairs(tabDefs) do
         local b = makeButton(panel, def[2], 92)
         b.label = def[2]
-        if prev then b:SetPoint("LEFT", prev, "RIGHT", 6, 0) else b:SetPoint("TOPLEFT", 12, -58) end
+        if prev then b:SetPoint("LEFT", prev, "RIGHT", 6, 0) else b:SetPoint("TOPLEFT", 12, -84) end
         b:SetScript("OnClick", function()
             currentTab, offset = def[1], 0
             ns.RefreshPanel()
         end)
+        b:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+            GameTooltip:SetText(def[2])
+            GameTooltip:AddLine(TAB_HINT[def[1]], 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
         tabs[def[1]] = b
         prev = b
     end
 
     panel.hint = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    panel.hint:SetPoint("TOPLEFT", 14, -86)
+    panel.hint:SetPoint("TOPLEFT", 14, -112)
     panel.hint:SetWidth(PANEL_W - 28)
     panel.hint:SetJustifyH("LEFT")
     panel.hint:SetTextColor(0.75, 0.73, 0.68)
 
     panel.list = CreateFrame("Frame", nil, panel)
-    panel.list:SetPoint("TOPLEFT", 14, -114)
+    panel.list:SetPoint("TOPLEFT", 14, -140)
     panel.list:SetSize(PANEL_W - 28, ROWS * ROW_H)
     panel.list:EnableMouseWheel(true)
     panel.list:SetScript("OnMouseWheel", function(_, delta)

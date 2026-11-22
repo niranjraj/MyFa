@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0
+- Scan progress bar: "Asking the server for every auction... 12s", then "Reading auctions 45% (12,300 of 27,400)", then "Done". The server doesn't report progress while it prepares the list, so that part shows a moving bar and a seconds counter.
+- Scans no longer get stuck on "Waiting for server". MyFA also watches the list size, so it carries on if the server's signal never comes, and gives up after 2 minutes with a message.
+- Closing the Auction House during a scan stops it cleanly with a message. Closing only the MyFA panel doesn't stop it.
+- A "Next:" line under the header always says what to do now: press Full scan, type /reload, /reload again once Desk has read it, or check My flips when something is ready to sell.
+- Every row has a label: FLIP, VENDOR, RAID or SNIPE on Buy; SELL, VENDOR, CRAFT or KEEP on Sell; CRAFT on Craft; SELL NOW, HOLD, BELOW COST or NO PRICE on My flips.
+- Hover a row for step-by-step instructions (what to press, the most to pay, what to post it at, where the item is). Hover a tab for what it's for.
+
 ## 1.2.1
 - Clearer panel: tabs are now **Buy**, **Sell**, **Craft** and **My flips**. A line under the tabs explains each one and what its right-hand number means. Rows read in plain words, for example "buy x2, max 74g 20s each" or "post at 35c each".
 - Docking now finds auction windows that other addons place inside Blizzard's Auction House frame, such as wider "market" windows. It also learns which windows close with the Auction House, so it docks right the next time.
