@@ -27,6 +27,8 @@ sys.path.insert(0, str(HERE))
 
 import myfa_desk as desk  # noqa: E402
 import updater  # noqa: E402
+import guide as guide_mod  # noqa: E402
+import analysis  # noqa: E402
 from analysis import History  # noqa: E402
 
 DEFAULT_PORT = 47800
@@ -68,6 +70,7 @@ class Desk:
         self.result = None
         self.report_ts = desk.REPORT_PATH.stat().st_mtime if desk.REPORT_PATH.exists() else 0
         self.update = {"checked": False, "available": False, "tag": None, "notes": "", "busy": False}
+        self.guide = {"busy": False, "error": None, "started": None}
         self.reprocess = threading.Event()
         self.stop = threading.Event()
         self.restart_after_stop = False
@@ -224,6 +227,7 @@ class Desk:
                 "auto_update": self.cfg.get("auto_update", "ask"),
             },
             "windows": os.name == "nt",
+            "guide": dict(self.guide, has_key=bool(guide_mod.api_key(self.cfg))),
         }
 
     def save_settings(self, data):
@@ -251,12 +255,101 @@ class Desk:
             cfg["desktop_notifications"] = bool(data["desktop_notifications"])
         if data.get("auto_update") in ("ask", "always", "never"):
             cfg["auto_update"] = data["auto_update"]
+        if "anthropic_api_key" in data:
+            key = (data.get("anthropic_api_key") or "").strip()
+            if key and not key.startswith("sk-"):
+                errors.append("That doesn't look like a Claude API key (they start with sk-).")
+            else:
+                cfg["anthropic_api_key"] = key
         if not errors:
             desk.save_config(cfg)
             self.cfg = cfg
             self.reprocess.set()
             log("Settings saved.")
         return errors
+
+    # ---- flips added or removed from the dashboard --------------------------------------
+    def add_flip(self, data):
+        r = self.result
+        if not r:
+            return {"error": "No scan loaded yet. Do a scan first so MyFA knows item names."}
+        text = (data.get("item") or "").strip()
+        item_id = int(text) if text.isdigit() else r["names"].get(text.lower())
+        if not item_id:
+            return {"error": f"Couldn't find \"{text}\". Pick a name from the suggestions; the item must have been seen in a scan or your bags."}
+        try:
+            qty = int(data.get("qty") or 0)
+        except ValueError:
+            qty = 0
+        if qty < 1:
+            return {"error": "Enter how many you bought."}
+        price = analysis.parse_money(str(data.get("price") or ""))
+        if not price:
+            return {"error": "Enter the price you paid for each, like 14s50c or 1g20s."}
+        ts = int(time.time())
+        if data.get("date"):
+            try:
+                ts = int(time.mktime(time.strptime(data["date"] + " 12:00", "%Y-%m-%d %H:%M")))
+            except ValueError:
+                pass
+        manual = analysis.load_manual()
+        manual.setdefault("adds", []).append({
+            "mid": os.urandom(6).hex(), "id": item_id, "q": qty, "u": price, "t": ts, "realm": r["realm"], "name": text})
+        manual.setdefault("forgets", {}).pop(str(item_id), None)
+        analysis.save_manual(manual)
+        log(f"Added flip: {qty} {text} at {analysis.fmt(price)} each. /reload in game to sync it to the addon.")
+        self.reprocess.set()
+        return {"ok": True, "message": f"Added {qty} {text}. It shows here in a moment; /reload in game to sync it."}
+
+    def forget_flip(self, data):
+        try:
+            item_id = int(data.get("id"))
+        except (TypeError, ValueError):
+            return {"error": "Unknown item."}
+        manual = analysis.load_manual()
+        manual["adds"] = [m for m in manual.get("adds", []) if m.get("id") != item_id]
+        manual.setdefault("forgets", {})[str(item_id)] = int(time.time())
+        analysis.save_manual(manual)
+        log("Stopped tracking a flip. /reload in game to sync it to the addon.")
+        self.reprocess.set()
+        return {"ok": True}
+
+    def item_names(self):
+        r = self.result
+        if not r:
+            return []
+        owned = {x["name"] for x in r["inventory"]}
+        names = sorted(r["names"], key=lambda n: n)
+        # items you own first, then everything else; original capitalisation from the scan
+        proper = {}
+        for g in ("inventory", "trends", "gathering", "flips", "crafts"):
+            for x in r.get(g, []):
+                proper[x["name"].lower()] = x["name"]
+        out = sorted(owned) + [proper.get(n, n.title()) for n in names if proper.get(n, n.title()) not in owned]
+        return out[:6000]
+
+    # ---- researched guide ----------------------------------------------------------------
+    def start_guide(self):
+        if self.guide["busy"]:
+            return {"ok": True}
+        if not self.result:
+            return {"error": "No scan loaded yet. Do a scan first."}
+        if not guide_mod.api_key(self.cfg):
+            return {"error": "Add your Claude API key first."}
+        self.guide.update(busy=True, error=None, started=time.time())
+
+        def run():
+            log("Researching your guide with Claude (web search)... this takes about a minute.")
+            out = guide_mod.fetch_guide(self.cfg, self.result)
+            if out.get("error"):
+                self.guide.update(busy=False, error=out["error"])
+                log(f"Guide: {out['error']}")
+            else:
+                self.guide.update(busy=False, error=None)
+                log(f"Guide ready ({out.get('searches', 0)} web searches).")
+                self.reprocess.set()
+        threading.Thread(target=run, daemon=True).start()
+        return {"ok": True}
 
     def detect(self):
         found = desk.find_wow()
@@ -313,6 +406,8 @@ def make_handler(app: Desk):
                 return self._send(200, FAVICON, "image/svg+xml")
             if self.path == "/api/status":
                 return self._send(200, json.dumps(app.status()))
+            if self.path == "/api/items":
+                return self._send(200, json.dumps(app.item_names()))
             return self._send(404, '{"error":"not found"}')
 
         def do_POST(self):
@@ -340,6 +435,12 @@ def make_handler(app: Desk):
             if route == "/api/settings":
                 errors = app.save_settings(data)
                 return self._send(200, json.dumps({"ok": not errors, "errors": errors}))
+            if route == "/api/addflip":
+                return self._send(200, json.dumps(app.add_flip(data)))
+            if route == "/api/forget":
+                return self._send(200, json.dumps(app.forget_flip(data)))
+            if route == "/api/guide":
+                return self._send(200, json.dumps(app.start_guide()))
             if route == "/api/detect":
                 return self._send(200, json.dumps(app.detect()))
             if route == "/api/shortcut":
@@ -576,7 +677,7 @@ CONTROL_HTML = r"""
     $('c-auto').value = st.auto_update;
   }
 
-  function render(s) {
+  let render = function (s) {
     last = s;
     $('c-dot').className = 'dot ' + s.state;
     $('c-state').textContent = LABEL[s.state] || s.state;
@@ -599,7 +700,7 @@ CONTROL_HTML = r"""
     if (atBottom) lg.scrollTop = lg.scrollHeight;
     fill(s);
     if ((s.state === 'setup') && $('c-panel').hidden) openPanel(true);
-  }
+  };
 
   async function poll() {
     if (stopped) return;
@@ -655,6 +756,61 @@ CONTROL_HTML = r"""
                 setTimeout(() => $('c-saved').hidden = true, 2500); poll(); }
     else { $('c-errors').textContent = (r.errors || ['Couldn\'t save.']).join(' '); $('c-errors').hidden = false; }
   };
+  // ---- dashboard forms that need the running app (the dashboard loads below this script) ----
+  document.body.classList.add('live');
+  let gFetch = null, gStatus = null, guideWasBusy = false;
+  const guideTick = (s) => {
+    if (!gFetch || !s.guide) return;
+    if (s.guide.busy) {
+      guideWasBusy = true;
+      gFetch.disabled = true; gFetch.textContent = 'Researching…'; gStatus.style.color = '';
+      gStatus.textContent = `Searching Wowhead and Forever guides… ${Math.round(Date.now() / 1000 - s.guide.started)}s`;
+    } else if (s.guide.error) {
+      gFetch.disabled = !s.guide.has_key; gStatus.textContent = s.guide.error; gStatus.style.color = '#f08c79';
+      if (gFetch.textContent === 'Researching…') gFetch.textContent = 'Try again';
+    } else if (guideWasBusy) {
+      gStatus.textContent = 'Guide ready. Loading…'; gStatus.style.color = '#72d38e'; guideWasBusy = false;
+      setTimeout(() => location.reload(), 2500);
+    }
+  };
+  const _render = render;
+  render = (s) => { _render(s); guideTick(s); };
+  const wire = () => {
+  const fAdd = document.getElementById('f-add');
+  if (fAdd) {
+    fetch('/api/items', { cache: 'no-store' }).then(r => r.json()).then(names => {
+      document.getElementById('f-items').innerHTML = names.map(n => `<option value="${n.replace(/"/g, '&quot;').replace(/</g, '&lt;')}">`).join('');
+    }).catch(() => {});
+    fAdd.onsubmit = async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById('f-msg');
+      msg.textContent = 'Adding…';
+      const r = await post('/api/addflip', { item: document.getElementById('f-item').value, qty: document.getElementById('f-qty').value,
+        price: document.getElementById('f-price').value, date: document.getElementById('f-date').value });
+      msg.textContent = r.ok ? r.message : (r.error || 'Couldn\'t add it.');
+      msg.style.color = r.ok ? '#72d38e' : '#f08c79';
+      if (r.ok) { fAdd.reset(); setTimeout(() => location.reload(), 3500); }
+    };
+  }
+  document.querySelectorAll('[data-forget]').forEach(b => b.addEventListener('click', async () => {
+    b.disabled = true; b.textContent = 'Removing…';
+    await post('/api/forget', { id: b.dataset.forget });
+    setTimeout(() => location.reload(), 3500);
+  }));
+  gFetch = document.getElementById('g-fetch'); gStatus = document.getElementById('g-status');
+  if (gFetch) gFetch.onclick = async () => {
+    const r = await post('/api/guide');
+    if (r.error) { gStatus.textContent = r.error; return; }
+    gFetch.disabled = true; gFetch.textContent = 'Researching…';
+  };
+  const gKey = document.getElementById('g-keyform');
+  if (gKey) gKey.onsubmit = async (e) => {
+    e.preventDefault();
+    const r = await post('/api/settings', { anthropic_api_key: document.getElementById('g-key').value });
+    if (r.ok) { location.reload(); } else { gStatus.textContent = (r.errors || []).join(' '); }
+  };
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire); else wire();
   document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
   poll();
   setInterval(poll, 3000);

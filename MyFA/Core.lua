@@ -1,6 +1,6 @@
 -- MyFA Core: saved data, character snapshot (bags, gold, recipes, vendor prices), slash commands.
 local ADDON, ns = ...
-ns.VERSION = "1.3.0"
+ns.VERSION = "1.4.0"
 ns.HISTORY_DAYS = 14
 
 local DB_DEFAULTS = {
@@ -11,6 +11,8 @@ local DB_DEFAULTS = {
     vendorBuy = {}, -- [itemID] = copper per unit when bought from a merchant
     ledger = {},    -- { t, k = "buy", id, q, u, m = manual, x = forgotten }
     alerted = {},   -- [itemID] = { p = price alerted at, t = time }
+    imported = {},  -- [mid] = true: flips added in MyFA Desk that are already in the ledger
+    forgotten = {}, -- [itemID] = time: "stop tracking" requests from MyFA Desk already applied
     settings = { roi = 0.15, alerts = true },
     ui = {},        -- panel position
 }
@@ -173,6 +175,37 @@ function ns.SnapshotBank()
     end
 end
 
+-- Character profile: level, class, zone, professions (for MyFA Desk's Guide) --------------
+
+function ns.SnapshotProfile()
+    local ok, err = pcall(function()
+        local c = ns.Char()
+        c.level = UnitLevel and UnitLevel("player") or c.level
+        if UnitClass then
+            local className, classFile = UnitClass("player")
+            c.class, c.classFile = className, classFile
+        end
+        if UnitRace then c.race = UnitRace("player") end
+        if GetZoneText then c.zone = GetZoneText() end
+        c.profs = c.profs or {}
+        if GetProfessions and GetProfessionInfo then
+            local list = { GetProfessions() }
+            for i = 1, select("#", GetProfessions()) do
+                local idx = list[i]
+                if idx then
+                    local name, _, skill, maxSkill = GetProfessionInfo(idx)
+                    if name then c.profs[name] = { skill, maxSkill } end
+                end
+            end
+        end
+        c.profileT = time()
+    end)
+    if not ok and not ns.profileWarned then
+        ns.profileWarned = true
+        ns.Print("couldn't read your character profile: " .. tostring(err))
+    end
+end
+
 -- Mailbox: Auction House purchases land here first -----------------------------
 
 function ns.SnapshotMail()
@@ -257,11 +290,15 @@ function ns.SnapshotRecipes()
     if not (TS and TS.GetAllRecipeIDs and TS.GetRecipeInfo and TS.GetRecipeSchematic) then return end
     local ok, err = pcall(function()
         local profName
+        local c = ns.Char()
         if TS.GetBaseProfessionInfo then
             local p = TS.GetBaseProfessionInfo()
             profName = p and p.professionName
+            if profName and p.skillLevel then
+                c.profs = c.profs or {}
+                c.profs[profName] = { p.skillLevel, p.maxSkillLevel }
+            end
         end
-        local c = ns.Char()
         local count = 0
         for _, recipeID in ipairs(TS.GetAllRecipeIDs() or {}) do
             local info = TS.GetRecipeInfo(recipeID)
@@ -338,6 +375,7 @@ f:RegisterEvent("BANKFRAME_OPENED")
 f:RegisterEvent("BANKFRAME_CLOSED")
 pcall(f.RegisterEvent, f, "PLAYERBANKSLOTS_CHANGED")
 f:RegisterEvent("MAIL_SHOW")
+for _, e in ipairs({ "PLAYER_LEVEL_UP", "SKILL_LINES_CHANGED", "ZONE_CHANGED_NEW_AREA" }) do pcall(f.RegisterEvent, f, e) end
 f:RegisterEvent("MAIL_INBOX_UPDATE")
 f:RegisterEvent("MAIL_CLOSED")
 
@@ -350,6 +388,7 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
         if MyFA_DB.settings.alerts == nil then MyFA_DB.settings.alerts = true end
     elseif event == "PLAYER_LOGIN" then
         ns.SnapshotBags()
+        ns.SnapshotProfile()
         if ns.OnLogin then ns.OnLogin() end
     elseif event == "PLAYER_LOGOUT" then
         ns.SnapshotBags()
@@ -364,6 +403,8 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     elseif event == "BANKFRAME_CLOSED" then
         ns.SnapshotBank()
         bankOpen = false
+    elseif event == "PLAYER_LEVEL_UP" or event == "SKILL_LINES_CHANGED" or event == "ZONE_CHANGED_NEW_AREA" then
+        if C_Timer then C_Timer.After(0.5, ns.SnapshotProfile) else ns.SnapshotProfile() end
     elseif event == "MAIL_SHOW" or event == "MAIL_INBOX_UPDATE" or event == "MAIL_CLOSED" then
         ns.SnapshotMail()
     elseif event == "TRADE_SKILL_LIST_UPDATE" then
@@ -383,6 +424,7 @@ local HELP = {
     "/myfa - show or hide the panel",
     "/myfa scan - full Auction House scan (once every 15 min)",
     "/myfa status - data and targets age",
+    "/myfa add - open the Add flip window (or use + Add flip on the My flips tab)",
     "/myfa bought [item] qty price - track something you bought earlier, e.g. /myfa bought [Golden Sansam] 20 14s50c",
     "/myfa forget [item] - stop tracking an item's flip",
     "/myfa roi 20 - alert when a flip is worth 20%% profit after the cut (now %d%%)",
@@ -445,11 +487,13 @@ SlashCmdList.MYFA = function(msg)
     elseif cmd == "alerts" then
         MyFA_DB.settings.alerts = rest:lower() ~= "off"
         ns.Print("sell alerts " .. (MyFA_DB.settings.alerts and "on." or "off."))
+    elseif cmd == "add" then
+        if ns.ShowAddFlip then ns.ShowAddFlip() end
     elseif cmd == "dock" then
         if ns.Redock then ns.Redock() end
     elseif cmd == "help" or cmd == "?" then
         for i, line in ipairs(HELP) do
-            ns.Print(i == 6 and string.format(line, math.floor(MyFA_DB.settings.roi * 100 + 0.5)) or line)
+            ns.Print(i == 7 and string.format(line, math.floor(MyFA_DB.settings.roi * 100 + 0.5)) or line)
         end
     else
         if ns.TogglePanel then ns.TogglePanel() end

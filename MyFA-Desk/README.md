@@ -55,7 +55,18 @@ Items with fewer than 10 listed (often recipes and patterns) are thin markets. T
 - **Desk:** prints the same alert and shows a Windows notification. Turn that off with `"desktop_notifications": false`.
 - **Raid items:** if the item is also a raid consumable, the alert says so, because launch week usually pays more and you may want to hold.
 - **Where to see them:** the **My flips** tab in game and **My flips** in Desk list what you paid, the price now, the alert price, the profit now and a note.
-- **Stop tracking** an item with `/myfa forget [item]`. Turn alerts off with `/myfa alerts off`.
+- **Add flips by hand:** press **+ Add flip** on the My flips tab in game (or `/myfa add`), drop the item in or shift-click it, then enter quantity and price each. In MyFA Desk, use the **Add a flip** form on My flips. It suggests item names, and the flip reaches the game on your next /reload.
+- **Stop tracking** a flip with **Remove** on its row in Desk, or `/myfa forget [item]` in game. Turn alerts off with `/myfa alerts off`.
+
+## Guide
+
+The **Guide** tab in MyFA Desk answers "what should I do next?":
+
+- **Your characters:** level, class, zone, profession skills and gold for each character. Log in once on each, and open each profession window once.
+- **Your next moves:** up to ten concrete actions ranked by gold: sell what's ready, post your items, craft from what you own, buy the best flips, what your gathering skill can pick that sells best now, and when to visit a trainer.
+- **Researched guide:** with a Claude API key (console.anthropic.com, API keys), press **Fetch guide**. Claude searches Wowhead and current WoW Forever guides for your characters and writes a plan: quests that pay at your level, profession next steps priced from your own scans, farms, items about to move and recent Forever changes, with sources. Paste the key in the Guide tab or in Settings; it's stored only in `config.json` on your PC. A fetch uses up to 8 web searches and costs a few cents. Refresh it when you level up or a patch lands. In the terminal: `run_desk.bat --guide`.
+
+Gathering skill requirements use classic values; Forever's new herbs and any changed nodes aren't in that list yet.
 
 ## Multiple characters
 

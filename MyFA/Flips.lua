@@ -81,9 +81,42 @@ ev:SetScript("OnEvent", function(_, event, a1, a2)
     elseif event == "AUCTION_HOUSE_SHOW" then
         C_Timer.After(1, function() ns.CheckFlips() end)
     elseif event == "PLAYER_LOGIN" then
+        ns.ImportFromDesk()
         C_Timer.After(6, function() ns.CheckFlips() end)
     end
 end)
+
+-- flips added or removed in MyFA Desk arrive through Targets.lua --------------------------
+
+function ns.ImportFromDesk()
+    local t = MyFA_Targets
+    if not (t and MyFA_DB) then return end
+    MyFA_DB.imported = MyFA_DB.imported or {}
+    MyFA_DB.forgotten = MyFA_DB.forgotten or {}
+    local added = 0
+    for _, e in ipairs(t.imports or {}) do
+        if e.mid and e.id and e.q and e.u and not MyFA_DB.imported[e.mid] then
+            table.insert(MyFA_DB.ledger, { t = e.t or time(), k = "buy", id = e.id, q = e.q, u = e.u, m = true, mid = e.mid })
+            MyFA_DB.imported[e.mid] = true
+            ns.FillItemMeta(e.id)
+            added = added + 1
+        end
+    end
+    local removed = 0
+    for _, f in ipairs(t.forgets or {}) do
+        if f.id and f.t and (MyFA_DB.forgotten[f.id] or 0) < f.t then
+            for _, e in ipairs(MyFA_DB.ledger) do
+                if e.k == "buy" and e.id == f.id and e.t <= f.t then e.x = true end
+            end
+            MyFA_DB.forgotten[f.id] = f.t
+            MyFA_DB.alerted[f.id] = nil
+            removed = removed + 1
+        end
+    end
+    if added > 0 or removed > 0 then
+        ns.Print(string.format("synced with MyFA Desk: %d flip%s added, %d removed.", added, added == 1 and "" or "s", removed))
+    end
+end
 
 -- positions: what you still hold from your purchases ---------------------------------
 

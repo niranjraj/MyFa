@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0
+- **Add flips by hand.** In game: **+ Add flip** on the My flips tab (or `/myfa add`). Drag the item in from your bags, shift-click it, or type its name, then enter quantity and price each. In MyFA Desk: the **Add a flip** form on My flips, with item-name suggestions and an optional date. Desk-added flips reach the addon on your next /reload.
+- **Remove** button on each row of Desk's My flips stops tracking that flip, in Desk and in game.
+- New **Guide** tab in MyFA Desk:
+  - **Your characters:** level, race and class, zone, profession skills and gold for each character, recorded by the addon.
+  - **Your next moves:** the best things to do right now, ranked by gold, from your own scans, bags, bank and recipes. It also gives gathering advice limited to what your skill can pick, and reminds you when a profession is at its skill cap.
+  - **Researched guide:** press **Fetch guide** and Claude searches Wowhead and current WoW Forever guides for your level, class and professions, using your scan prices. You get quests that pay, profession next steps, farms, items to watch and recent Forever changes, with sources. Needs your Claude API key (Settings or the Guide tab; stored only on your PC). Each fetch costs a few cents. Terminal: `run_desk.bat --guide`.
+- The addon records each character's level, class, race, zone and profession skills.
+- Raid stock-up buys now respect your per-item gold limit.
+
 ## 1.3.0
 - Scan progress bar: "Asking the server for every auction... 12s", then "Reading auctions 45% (12,300 of 27,400)", then "Done". The server doesn't report progress while it prepares the list, so that part shows a moving bar and a seconds counter.
 - Scans no longer get stuck on "Waiting for server". MyFA also watches the list size, so it carries on if the server's signal never comes, and gives up after 2 minutes with a message.

@@ -2,6 +2,8 @@
 import html
 import time
 
+import guide as guide_mod
+
 QUALITY = {0: "q0", 1: "q1", 2: "q2", 3: "q3", 4: "q4", 5: "q5"}
 
 
@@ -253,6 +255,98 @@ def analysis_panel(result, it, sort_or):
     return "".join(parts)
 
 
+MOVE_TAG = {"sell": ("SELL", "act-ah"), "craft": ("CRAFT", "act-c"), "flip": ("FLIP", "act-h"),
+            "gather": ("GATHER", "act-v"), "skill": ("SKILL", "act-v")}
+
+GUIDE_EMPTY = (
+    '<div class="empty"><p>Not researched yet. <b>Fetch guide</b> has Claude search Wowhead and current WoW Forever guides '
+    "for your characters' level, class and professions, using your own Auction House prices. You get quests worth gold, "
+    "what to craft next, what to farm, and what changed recently.</p></div>")
+
+KEY_FORM = (
+    '<form class="keyform live-only" id="g-keyform"><label for="g-key">Claude API key</label>'
+    '<input type="password" id="g-key" autocomplete="off" spellcheck="false" placeholder="sk-ant-...">'
+    '<button type="submit" class="cbtn">Save key</button>'
+    '<span class="hint">From console.anthropic.com, API keys. Stored only on this PC, in config.json. '
+    'Each fetch costs a few cents on your Anthropic account.</span></form>')
+
+ADD_FORM = """<form class="addflip live-only" id="f-add" autocomplete="off">
+  <div class="af-title"><b>Add a flip</b><span class="hint">Something you bought earlier: MyFA tracks it and alerts you when it's worth selling.</span></div>
+  <label>Item<input type="text" id="f-item" list="f-items" required placeholder="Start typing an item name"></label>
+  <label>Quantity<input type="number" id="f-qty" min="1" step="1" required></label>
+  <label>Price paid, each<input type="text" id="f-price" required placeholder="14s50c or 1g20s"></label>
+  <label>Bought on<input type="date" id="f-date"></label>
+  <button type="submit" class="cbtn primary">Add flip</button>
+  <span class="hint" id="f-msg" role="status"></span>
+  <datalist id="f-items"></datalist>
+</form>"""
+
+
+def guide_panel(result, it):
+    parts = []
+    if result["profiles"]:
+        rows = []
+        for p in result["profiles"]:
+            profs = ", ".join(f"{esc(k)} {v[0]}/{v[1]}" for k, v in p["profs"].items()) or \
+                '<span class="na">open a profession window once</span>'
+            rows.append([
+                td(f'<b>{esc(p["name"])}</b>', p["name"]), td(str(p["level"] or "?"), p["level"] or 0, "num"),
+                td(esc(" ".join(x for x in (p.get("race"), p.get("class")) if x) or "?"), p.get("class") or ""),
+                td(esc(p["zone"] or ""), p["zone"] or ""), td(profs, None),
+                td(money(p["money"]), p["money"], "num"),
+                td("yes" if p["bank"] else '<span class="na">not yet</span>', int(p["bank"])),
+            ])
+        parts.append(
+            '<section class="block" aria-labelledby="h-chars"><div class="blockhead"><h2 id="h-chars">Your characters</h2>'
+            '<p class="lede">Recorded by the MyFA addon when you log in. Professions fill in when you open a profession window.</p></div>'
+            + table("chars", [("Character", "s", ""), ("Level", "n", "num"), ("Race, class", "s", ""), ("Zone", "s", ""),
+                              ("Professions", "s", ""), ("Gold", "n", "num"), ("Bank seen", "n", "")], rows, "")
+            + "</section>")
+    else:
+        parts.append('<div class="empty"><p>No character details yet. Update the MyFA addon, log in, then /reload.</p></div>')
+
+    moves = result["next_moves"]
+    if moves:
+        lis = []
+        for m in moves:
+            tag_text, tag_cls = MOVE_TAG[m["kind"]]
+            detail = f'<span>{esc(m["detail"])}</span>' if m["detail"] else ""
+            gold = money(m["gold"], True) if m["gold"] else ""
+            lis.append(f'<li><span class="tagx {tag_cls}">{tag_text}</span><div class="mv"><b>{esc(m["text"])}</b>{detail}</div>'
+                       f'<span class="num pos">{gold}</span></li>')
+        parts.append(
+            '<section class="block" aria-labelledby="h-next"><div class="blockhead"><h2 id="h-next">Your next moves</h2>'
+            '<p class="lede">The best things to do right now, worked out from your own scans, bags, bank and recipes. '
+            'Biggest gold first.</p></div><ol class="moves">' + "".join(lis) + "</ol></section>")
+
+    cached = guide_mod.load_cached()
+    has_key = bool(guide_mod.api_key(result["cfg"]))
+    if cached and cached.get("markdown"):
+        when = time.strftime("%d %b %H:%M", time.localtime(cached["ts"]))
+        srcs = "".join(f'<li><a href="{esc(x["url"])}" target="_blank" rel="noopener noreferrer">{esc(x["title"])}</a></li>'
+                       for x in cached.get("sources", [])[:15])
+        body = (f'<p class="fine">Researched {when} for {esc(", ".join(cached.get("for", [])))} · '
+                f'{cached.get("searches", 0)} web searches · {esc(cached.get("model", ""))}. '
+                'Check details in game: guides can be wrong or out of date.</p>'
+                f'<div class="guide">{guide_mod.md_to_html(cached["markdown"])}</div>')
+        if srcs:
+            body += (f'<details class="watch"><summary>Sources ({len(cached.get("sources", []))})</summary>'
+                     f'<ul class="srcs">{srcs}</ul></details>')
+        btn = "Refresh guide"
+    else:
+        body, btn = GUIDE_EMPTY, "Fetch guide"
+    parts.append(
+        '<section class="block" aria-labelledby="h-guide"><div class="blockhead guidehead"><div>'
+        '<h2 id="h-guide">Researched guide</h2><p class="lede">Claude looks things up on the web for you: quests that pay, '
+        'profession steps, farms and recent Forever changes.</p></div>'
+        f'<div class="live-only"><button type="button" class="cbtn primary" id="g-fetch" {"" if has_key else "disabled"}>{btn}</button> '
+        '<span class="hint" id="g-status" role="status"></span></div></div>'
+        + ("" if has_key else KEY_FORM)
+        + '<p class="static-only fine">Start MyFA Desk as the app (double-click MyFA Desk) to fetch a guide from here.</p>'
+        + body + "</section>")
+    return "".join(parts)
+
+
 def build(result, advice=None, config_path=""):
     now = result["now"]
     cfg = result["cfg"]
@@ -362,6 +456,7 @@ def build(result, advice=None, config_path=""):
         td(pct(r["trend"], True), sort_or(r["trend"]), "num"),
         td(time.strftime("%d %b", time.localtime(r["since"])), r["since"]),
         td(esc(r["note"]), None, "why"),
+        td(f'<button type="button" class="cbtn small live-only" data-forget="{r["id"]}" title="Stop tracking this flip">Remove</button>', None),
     ] for r in result["positions"]]
 
     names = {}
@@ -395,12 +490,14 @@ def build(result, advice=None, config_path=""):
         raid_note = f" Next raids open {esc(r0['date'])} ({r0['days_left']} days)."
     panels.append(("analysis", "Analysis", None, analysis_panel(result, it, sort_or),
                    "Your overview: raid timing, how the market is moving, the price bands to flip in, and how to flip." + raid_note))
+    panels.append(("guide", "Guide", None, guide_panel(result, it),
+                   "What to do next for gold and professions, for each of your characters."))
     ready = [r for r in result["positions"] if r["status"] == "Sell now"]
     roi_pct = int(round(result["roi"] * 100))
-    panels.append(("mine", "My flips", len(result["positions"]), table("mine", [
+    panels.append(("mine", "My flips", len(result["positions"]), ADD_FORM + table("mine", [
         ("Item", "s", ""), ("Status", "n", ""), ("Qty", "n", "num"), ("Where", "s", ""), ("You paid", "n", "num"),
         ("Lowest now", "n", "num"), ("Alert at", "n", "num"), ("Aim to sell at", "n", "num"), ("Profit now", "n", "num"),
-        ("Trend", "n", "num"), ("Bought", "n", ""), ("Note", "s", "why")], pos_rows,
+        ("Trend", "n", "num"), ("Bought", "n", ""), ("Note", "s", "why"), ("", "s", "")], pos_rows,
         "Nothing tracked yet. Every Auction House purchase is tracked automatically, from any window or addon. "
         "For something you bought earlier, type <code>/myfa bought [item] qty price</code> in game, for example "
         "<code>/myfa bought [Golden Sansam] 20 14s50c</code>."),
@@ -470,7 +567,7 @@ def build(result, advice=None, config_path=""):
     panels_html = "".join(
         f'<section role="tabpanel" id="panel-{pid}" aria-labelledby="tab-{pid}" {"" if n == 0 else "hidden"}>'
         f'<div class="panelhead"><p class="desc">{desc}</p>'
-        f'{"" if pid in ("claude", "analysis") else f"<label class=filter><span class=sr>Filter {esc(label)}</span><input type=search placeholder=Filter… data-filter=panel-{pid}></label>"}'
+        f'{"" if pid in ("claude", "analysis", "guide") else f"<label class=filter><span class=sr>Filter {esc(label)}</span><input type=search placeholder=Filter… data-filter=panel-{pid}></label>"}'
         f'</div>{body}</section>'
         for n, (pid, label, count, body, desc) in enumerate(panels))
 
@@ -642,6 +739,44 @@ em {{ font-style: normal; color: var(--text); }}
 span.pos {{ color: var(--pos); }} span.neg {{ color: var(--neg); }}
 
 .block {{ margin: 8px 0 36px; }}
+.tagx {{ font: 600 11px var(--sans); letter-spacing: .04em; padding: 2px 6px; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; }}
+.moves {{ list-style: none; margin: 0; padding: 0; max-width: 980px; }}
+.moves li {{ display: grid; grid-template-columns: 72px 1fr auto; gap: 14px; align-items: baseline; padding: 10px 0; border-top: 1px solid var(--line-soft); }}
+.moves li:first-child {{ border-top: 0; }}
+.moves .mv b {{ font-weight: 500; }}
+.moves .mv span {{ display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }}
+.moves .num {{ font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }}
+.guidehead {{ display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px 24px; }}
+.guide {{ max-width: 80ch; line-height: 1.6; }}
+.guide h2, .guide h3 {{ font-size: 15px; margin: 22px 0 6px; }}
+.guide h4 {{ font-size: 14px; margin: 16px 0 4px; }}
+.guide ul, .guide ol {{ padding-left: 20px; margin: 6px 0 12px; }}
+.guide li {{ margin: 3px 0; }}
+.guide a, .srcs a {{ color: #8fb8f0; text-underline-offset: 3px; }}
+.srcs {{ margin: 8px 0 0; padding-left: 18px; font-size: 13px; }}
+.hint {{ color: var(--muted); font-size: 12.5px; }}
+.cbtn {{ appearance: none; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: 500 13px var(--sans);
+  padding: 7px 12px; border-radius: 6px; cursor: pointer; }}
+.cbtn:hover {{ background: var(--raise); }}
+.cbtn:disabled {{ opacity: .55; cursor: default; }}
+.cbtn.primary {{ background: #e3bd62; border-color: #e3bd62; color: #17130a; font-weight: 600; }}
+.cbtn.small {{ padding: 3px 8px; font-size: 12px; }}
+.cbtn:focus-visible {{ outline: 2px solid var(--gold); outline-offset: 2px; }}
+.live-only {{ display: none !important; }}
+body.live .live-only {{ display: revert !important; }}
+body.live .static-only {{ display: none; }}
+.addflip {{ flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; margin: 0 0 16px; padding: 14px 16px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }}
+body.live form.addflip, body.live form.keyform {{ display: flex !important; }}
+.af-title {{ flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }}
+.addflip label, .keyform label {{ display: grid; gap: 4px; font-size: 12.5px; color: var(--muted); }}
+.addflip input, .keyform input {{ background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 10px; font: 13px var(--sans); color-scheme: dark; }}
+.addflip input:focus, .keyform input:focus {{ border-color: var(--gold); outline: none; }}
+#f-item {{ width: 260px; }} #f-qty {{ width: 90px; }} #f-price {{ width: 140px; }}
+.keyform {{ flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; margin: 0 0 16px; }}
+.keyform input {{ width: 320px; }}
+.keyform .hint {{ flex-basis: 100%; }}
 .block.ready {{ border: 1px solid rgba(114, 211, 142, .35); background: rgba(114, 211, 142, .05); border-radius: 8px;
   padding: 16px 18px 10px; }}
 .readylist {{ list-style: none; margin: 0; padding: 0; max-width: 760px; }}

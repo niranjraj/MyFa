@@ -9,6 +9,19 @@ from pathlib import Path
 
 DAY = 86400
 
+# Skill needed to gather (classic values; Forever may differ for some nodes and its new herbs aren't known yet)
+GATHER_SKILL = {
+    "Peacebloom": 1, "Silverleaf": 1, "Earthroot": 15, "Mageroyal": 50, "Briarthorn": 70, "Stranglekelp": 85,
+    "Bruiseweed": 100, "Wild Steelbloom": 115, "Grave Moss": 120, "Kingsblood": 125, "Liferoot": 150, "Fadeleaf": 160,
+    "Goldthorn": 170, "Khadgar's Whisker": 185, "Wintersbite": 195, "Firebloom": 205, "Purple Lotus": 210,
+    "Arthas' Tears": 220, "Sungrass": 230, "Blindweed": 235, "Ghost Mushroom": 245, "Gromsblood": 250,
+    "Golden Sansam": 260, "Dreamfoil": 270, "Mountain Silversage": 280, "Plaguebloom": 285, "Icecap": 290,
+    "Black Lotus": 300, "Copper Ore": 1, "Tin Ore": 65, "Silver Ore": 75, "Iron Ore": 125, "Gold Ore": 155,
+    "Mithril Ore": 175, "Truesilver Ore": 230, "Dark Iron Ore": 230, "Thorium Ore": 245, "Rough Stone": 1,
+    "Coarse Stone": 65, "Heavy Stone": 125, "Solid Stone": 175, "Dense Stone": 245, "Light Leather": 1,
+    "Medium Leather": 100, "Heavy Leather": 150, "Thick Leather": 200, "Rugged Leather": 250,
+}
+
 # Trade Goods (class 7) subclasses that gathering professions produce
 GATHER_TYPES = {5: "Cloth", 6: "Leather", 7: "Metal & Stone", 8: "Cooking", 9: "Herb", 10: "Elemental", 12: "Enchanting"}
 
@@ -598,6 +611,8 @@ def analyse(sv, history: History, cfg, now=None):
                 limit = b["buy"] if b else int(0.9 * mk)
                 units, cost, _ = _units_below(s.get("l") or [], limit)
                 qty = min(units, max(1, int((s.get("q") or 0) * float(cfg["max_supply_share"]))))
+                if budget != float("inf") and s["m"]:
+                    qty = min(qty, int(budget // s["m"]))  # never more than your per-item gold limit
                 action = "Buy"
                 why = (f"At or under its usual low ({fmt(limit)}) with {days_left} days to go. "
                        f"Raid demand usually lifts consumables into launch week.")
@@ -649,6 +664,16 @@ def analyse(sv, history: History, cfg, now=None):
                 })
 
     ledger = [e for e in (db.get("ledger") or []) if isinstance(e, dict)]
+
+    # flips added or removed in MyFA Desk that the addon hasn't picked up yet
+    manual = load_manual()
+    have_mids = {e.get("mid") for e in ledger if e.get("mid")}
+    for m in manual.get("adds", []):
+        if m.get("mid") not in have_mids and m.get("realm", realm_key) == realm_key:
+            ledger.append({"t": m["t"], "k": "buy", "id": m["id"], "q": m["q"], "u": m["u"], "m": True, "mid": m["mid"]})
+    forgets = {int(k): v for k, v in (manual.get("forgets") or {}).items()}
+    if forgets:
+        ledger = [e for e in ledger if not (e.get("id") in forgets and e.get("t", 0) <= forgets[e.get("id")])]
 
     # ---- my flips: what you bought and still hold, on every character ------------------
     roi = float((db.get("settings") or {}).get("roi") or cfg.get("flip_roi", 0.15))
@@ -704,6 +729,69 @@ def analyse(sv, history: History, cfg, now=None):
     order = {"Sell now": 0, "Hold": 1, "Under water": 2, "Not listed": 3}
     positions.sort(key=lambda r: (order[r["status"]], -(r["pl"] or -10**12)))
 
+    # ---- characters: level, class, professions (for the Guide) -------------------------------
+    profiles = []
+    for key, c in char_items:
+        profiles.append({
+            "name": key.split("-")[0], "level": c.get("level"), "class": c.get("class"), "race": c.get("race"),
+            "zone": c.get("zone"), "money": c.get("money") or 0,
+            "profs": {k: v for k, v in (c.get("profs") or {}).items() if isinstance(v, (list, tuple)) and len(v) >= 2},
+            "recipes": len(c.get("recipes") or {}), "bank": bool(c.get("bankT")),
+        })
+    profiles.sort(key=lambda p: -(p["level"] or 0))
+
+    # ---- next moves: the best things to do right now, ranked by gold ---------------------------
+    next_moves = []
+    def move(kind, text, gold=None, detail=""):
+        next_moves.append({"kind": kind, "text": text, "gold": int(gold) if gold else None, "detail": detail})
+
+    ready_pos = [r for r in positions if r["status"] == "Sell now"]
+    for r in ready_pos[:3]:
+        move("sell", f"Sell {r['qty']} {r['name']}: it cleared your profit target", r["pl"], f"From {r['where']}.")
+    posts = [r for r in inventory if r["action"] == "ah"]
+    if posts:
+        total = sum(r["value"] for r in posts)
+        names_ = ", ".join(r["name"] for r in posts[:3])
+        move("sell", f"Post {len(posts)} item types on the Auction House, starting with {names_}", total,
+             "Sell tab in game; match the lowest price.")
+    stock_crafts = sorted([r for r in crafts if r["stock"] and r["stock_gain"] > 0], key=lambda r: -r["stock_gain"])
+    for r in stock_crafts[:2]:
+        move("craft", f"Craft {r['stock']} {r['name']} from mats you already own", r["stock_gain"],
+             f"{r['prof']}: worth more than selling the mats raw.")
+    buy_crafts = [r for r in crafts if r["profit"] and r["profit"] > 0 and not r["stock"]]
+    for r in buy_crafts[:2]:
+        move("craft", f"Buy mats and craft {r['name']}", r["profit"], f"{r['prof']}: profit per craft, {r['listed']} listed.")
+    real_flips = [r for r in flips if r["kind"] in ("flip", "raid")]
+    for r in real_flips[:3]:
+        move("flip", f"Buy {r['qty']} {r['name']} at up to {fmt(r['max'])} each and resell", r["profit"], r["why"])
+    if vendor:
+        move("flip", f"Buy {len(vendor)} underpriced item type{'s' if len(vendor) != 1 else ''} and sell to a vendor", sum(r["profit"] for r in vendor),
+             "Vendor flips: no risk.")
+    gather_map = {"Herbalism": "Herb", "Mining": "Metal & Stone", "Skinning": "Leather"}
+    for p_ in profiles:
+        for prof, (skill, mx) in p_["profs"].items():
+            gtype = gather_map.get(prof)
+            if gtype:
+                can = [g for g in gathering if g["type"] == gtype and GATHER_SKILL.get(g["name"], 999) <= (skill or 0)]
+                can.sort(key=lambda g: -g["market"])
+                best = can[:3]
+                nxt = sorted([g for g in gathering if g["type"] == gtype and (skill or 0) < GATHER_SKILL.get(g["name"], 999) <= (skill or 0) + 50],
+                             key=lambda g: GATHER_SKILL[g["name"]])
+                if best:
+                    tail = (f" At {GATHER_SKILL[nxt[0]['name']]} skill you can gather {nxt[0]['name']} ({fmt(nxt[0]['market'])})."
+                            if nxt else "")
+                    move("gather", f"{p_['name']}'s {prof} ({skill}/{mx}): {', '.join(g['name'] for g in best)} are the best you can gather now",
+                         None, "Market: " + ", ".join(f"{g['name']} {fmt(g['market'])}" for g in best) + "." + tail
+                         + " Skill needs are classic values; Forever may differ.")
+            if mx and skill is not None and skill >= mx - 5 and mx < 300:
+                move("skill", f"{p_['name']}'s {prof} is at {skill}/{mx}: visit a trainer for the next rank", None,
+                     "You stop gaining skill at the cap.")
+    order_k = {"sell": 0, "craft": 1, "flip": 2, "gather": 3, "skill": 4}
+    with_gold = sorted([m for m in next_moves if m["gold"]], key=lambda m: -m["gold"])
+    advice = sorted([m for m in next_moves if not m["gold"]], key=lambda m: order_k[m["kind"]])
+    # skill and gathering advice has no gold figure, so keep room for it
+    next_moves = with_gold[:max(4, 10 - len(advice[:4]))] + advice[:4]
+
     spent_7d = sum((e.get("q", 0) * e.get("u", 0)) for e in ledger if e.get("t", 0) >= now - 7 * DAY)
 
     prices = {i: market(i) for i in scan if market(i)}
@@ -719,8 +807,38 @@ def analyse(sv, history: History, cfg, now=None):
         "ledger": ledger[-40:], "spent_7d": spent_7d, "prices": prices, "cfg": cfg,
         "bands": bands, "index": index, "weekday": weekday, "raid_plan": raid_plan, "raids": raids_out,
         "positions": positions, "roi": roi, "n_chars": len(chars),
+        "manual": manual, "names": {(m.get("n") or "").lower(): i for i, m in meta.items() if m.get("n")},
+        "profiles": profiles, "next_moves": next_moves,
         "mail_seen": any(c.get("mailT") for c in chars),
     }
+
+
+MANUAL_PATH = Path(__file__).resolve().parent / "data" / "manual.json"
+
+
+def load_manual():
+    try:
+        return json.loads(MANUAL_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"adds": [], "forgets": {}}
+
+
+def save_manual(data):
+    MANUAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    MANUAL_PATH.write_text(json.dumps(data, indent=1), encoding="utf-8")
+
+
+def parse_money(text):
+    """'1g20s50c', '20s', '1450' -> copper"""
+    import re
+    t = (text or "").lower().replace(" ", "")
+    if not t:
+        return None
+    if t.isdigit():
+        return int(t)
+    total = sum(int(n) * mult for n, mult in
+                ((m.group(1), {"g": 10000, "s": 100, "c": 1}[m.group(2)]) for m in re.finditer(r"(\d+)([gsc])", t)))
+    return total or None
 
 
 def _date(day):
@@ -766,4 +884,7 @@ def targets_table(result):
         "generated": result["now"], "realm": result["realm"], "scan": result["scan_ts"],
         "cut": result["cfg"]["ah_cut"], "buys": buys, "sells": sells, "crafts": crafts, "prices": result["prices"],
         "flips": {r["id"]: {"note": r["note"]} for r in result["positions"] if r["note"]},
+        "imports": [{k: m[k] for k in ("mid", "id", "q", "u", "t")} for m in result["manual"].get("adds", [])
+                    if m.get("realm", result["realm"]) == result["realm"]],
+        "forgets": [{"id": int(k), "t": v} for k, v in (result["manual"].get("forgets") or {}).items()],
     }

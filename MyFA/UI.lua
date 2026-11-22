@@ -403,6 +403,8 @@ function ns.RefreshPanel()
     offset = math.max(0, math.min(offset, #data - ROWS))
     for i = 1, ROWS do updateRow(rows[i], data[i + offset]) end
     panel.hint:SetText(TAB_HINT[currentTab] or "")
+    panel.addFlip:SetShown(currentTab == "mine")
+    panel.footer:SetWidth(currentTab == "mine" and (PANEL_W - 140) or (PANEL_W - 28))
     for key, tab in pairs(tabs) do
         local n = key == "mine" and #ns.Positions() or #((targets() or {})[key] or {})
         tab:SetText(tab.label .. " " .. n)
@@ -413,7 +415,7 @@ function ns.RefreshPanel()
         if currentTab == "mine" then
             panel.empty:SetText("No tracked flips yet.\n\nAnything you buy on the Auction House is tracked automatically, "
                 .. "from any window or addon. You get an alert when it's worth selling.\n\n"
-                .. "For something you bought earlier:\n/myfa bought [item] qty price\ne.g. /myfa bought [Golden Sansam] 20 14s50c")
+                .. "Bought something earlier? Press + Add flip below.")
         else
             panel.empty:SetText(t and "Nothing here in the latest targets." or
                 "No targets yet.\n\n1. Full scan here\n2. /reload so MyFA Desk can read it\n3. /reload again once Desk says targets are ready")
@@ -536,6 +538,16 @@ local function build()
     panel.footer:SetWidth(PANEL_W - 28)
     panel.footer:SetJustifyH("LEFT")
     panel.footer:SetText("Drag to move  ·  /myfa dock to snap back  ·  /myfa help for commands")
+    panel.addFlip = makeButton(panel, "+ Add flip", 100)
+    panel.addFlip:SetPoint("BOTTOMRIGHT", -12, 8)
+    panel.addFlip:SetScript("OnClick", function() ns.ShowAddFlip() end)
+    panel.addFlip:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Add a flip")
+        GameTooltip:AddLine("Track something you bought earlier at a known price. MyFA alerts you when it's worth selling.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    panel.addFlip:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     panel:SetScript("OnShow", function()
         panel.ticker = C_Timer.NewTicker(1, ns.RefreshHeader)
@@ -551,6 +563,156 @@ function ns.TogglePanel()
     if not panel then build() end
     panel:SetShown(not panel:IsShown())
 end
+
+-- Add flip window: track something you bought earlier --------------------------------------
+
+local dlg
+
+local function findItemID(text)
+    text = (text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if text == "" then return nil end
+    local id = tonumber(text:match("item:(%d+)")) or tonumber(text)
+    if id then return id end
+    local lower = text:lower():gsub("^%[", ""):gsub("%]$", "")
+    for itemID, meta in pairs(MyFA_DB.items) do
+        if meta.n and meta.n:lower() == lower then return itemID end
+    end
+    if C_Item and C_Item.GetItemInfoInstant then
+        local ok, found = pcall(C_Item.GetItemInfoInstant, text)
+        if ok and found then return found end
+    end
+    return nil
+end
+
+local function label(parent, text, y, template)
+    local fs = parent:CreateFontString(nil, "OVERLAY", template or "GameFontNormal")
+    fs:SetPoint("TOPLEFT", 16, y)
+    fs:SetWidth(300)
+    fs:SetJustifyH("LEFT")
+    fs:SetText(text)
+    return fs
+end
+
+local function editBox(parent, w, y, x)
+    local e = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+    e:SetSize(w, 22)
+    e:SetPoint("TOPLEFT", x or 22, y)
+    e:SetAutoFocus(false)
+    e:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    return e
+end
+
+local function buildAddFlip()
+    dlg = CreateFrame("Frame", "MyFAAddFlip", UIParent, "BackdropTemplate")
+    dlg:SetSize(340, 268)
+    dlg:SetPoint("CENTER")
+    dlg:SetFrameStrata("DIALOG")
+    dlg:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+    dlg:SetBackdropColor(0.055, 0.06, 0.07, 0.98)
+    dlg:SetBackdropBorderColor(GOLD[1], GOLD[2], GOLD[3], 0.5)
+    dlg:EnableMouse(true)
+    dlg:SetMovable(true)
+    dlg:RegisterForDrag("LeftButton")
+    dlg:SetScript("OnDragStart", dlg.StartMoving)
+    dlg:SetScript("OnDragStop", dlg.StopMovingOrSizing)
+    tinsert(UISpecialFrames, "MyFAAddFlip")
+
+    local title = dlg:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 16, -14)
+    title:SetText("Add a flip")
+    local sub = label(dlg, "Bought something earlier? Add it and MyFA alerts you when it's worth selling.", -38, "GameFontHighlightSmall")
+    sub:SetTextColor(0.75, 0.73, 0.68)
+
+    label(dlg, "Item", -72)
+    dlg.item = editBox(dlg, 296, -90)
+    local hint = label(dlg, "Shift-click it, drag it here from your bags, or type its exact name.", -114, "GameFontDisableSmall")
+    hint:SetWidth(310)
+
+    label(dlg, "Quantity", -140)
+    dlg.qty = editBox(dlg, 80, -158)
+    dlg.qty:SetNumeric(true)
+    local priceLabel = dlg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    priceLabel:SetPoint("TOPLEFT", 130, -140)
+    priceLabel:SetText("Price paid, each")
+    dlg.price = editBox(dlg, 150, -158, 136)
+    local ph = dlg:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    ph:SetPoint("TOPLEFT", 136, -182)
+    ph:SetText("e.g. 14s50c, 1g20s or 1450")
+
+    dlg.err = dlg:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    dlg.err:SetPoint("TOPLEFT", 16, -204)
+    dlg.err:SetWidth(310)
+    dlg.err:SetJustifyH("LEFT")
+    dlg.err:SetTextColor(0.91, 0.47, 0.42)
+
+    local add = makeButton(dlg, "Add flip", 110)
+    add:SetPoint("BOTTOMRIGHT", -14, 12)
+    local cancel = makeButton(dlg, "Cancel", 80)
+    cancel:SetPoint("RIGHT", add, "LEFT", -6, 0)
+    cancel:SetScript("OnClick", function() dlg:Hide() end)
+
+    -- drop an item from the bags into the item box
+    local function takeCursor(self)
+        if not GetCursorInfo then return end
+        local kind, id, link = GetCursorInfo()
+        if kind == "item" then
+            self:SetText(link or ("item:" .. id))
+            if ClearCursor then ClearCursor() end
+            dlg.qty:SetFocus()
+        end
+    end
+    dlg.item:SetScript("OnReceiveDrag", takeCursor)
+    dlg.item:HookScript("OnMouseDown", takeCursor)
+    dlg.item:SetScript("OnTabPressed", function() dlg.qty:SetFocus() end)
+    dlg.qty:SetScript("OnTabPressed", function() dlg.price:SetFocus() end)
+    dlg.price:SetScript("OnTabPressed", function() dlg.item:SetFocus() end)
+
+    local function submit()
+        local id = findItemID(dlg.item:GetText())
+        local qty = tonumber(dlg.qty:GetText())
+        local price = ns.ParseMoney(dlg.price:GetText())
+        if not id then
+            dlg.err:SetText("Couldn't find that item. Shift-click it or drag it in from your bags.")
+        elseif not qty or qty < 1 then
+            dlg.err:SetText("Enter how many you bought.")
+        elseif not price then
+            dlg.err:SetText("Enter the price you paid for each, like 14s50c.")
+        else
+            ns.RecordBuy(id, qty, price, true)
+            dlg:Hide()
+            currentTab, offset = "mine", 0
+            ns.RefreshPanel()
+            return
+        end
+        dlg.err:Show()
+    end
+    add:SetScript("OnClick", submit)
+    dlg.price:SetScript("OnEnterPressed", submit)
+    dlg.qty:SetScript("OnEnterPressed", function() dlg.price:SetFocus() end)
+    dlg.item:SetScript("OnEnterPressed", function() dlg.qty:SetFocus() end)
+    dlg:Hide()
+end
+
+-- shift-clicking an item while the Item box has focus puts the item there
+if hooksecurefunc and ChatEdit_InsertLink then
+    hooksecurefunc("ChatEdit_InsertLink", function(link)
+        if dlg and dlg:IsShown() and dlg.item:HasFocus() and type(link) == "string" and link:find("item:") then
+            dlg.item:SetText(link)
+            dlg.qty:SetFocus()
+        end
+    end)
+end
+
+function ns.ShowAddFlip(itemText)
+    if not dlg then buildAddFlip() end
+    dlg.item:SetText(itemText or "")
+    dlg.qty:SetText("")
+    dlg.price:SetText("")
+    dlg.err:SetText("")
+    dlg:Show()
+    dlg.item:SetFocus()
+end
+ns._findItemID = findItemID
 
 -- docking: sit beside whichever Auction House window is open (Blizzard's or an addon's) -----
 

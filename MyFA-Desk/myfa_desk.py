@@ -56,6 +56,8 @@ DEFAULTS = {
     "vendor_costs": {},          # {"3371": 4} item ID -> copper, for vendor mats MyFA hasn't seen yet
     "open_report": True,
     "claude_model": "claude-sonnet-5-5",
+    "anthropic_api_key": "",     # optional: enables the researched Guide (or set ANTHROPIC_API_KEY)
+    "guide_searches": 8,         # web searches per guide (each costs about 1 cent)
     "desktop_notifications": True,  # Windows notification when a flip becomes worth selling
     "auto_update": "ask",        # "ask", "always" or "never": check GitHub for a new MyFA release at start
     "github_token": "",          # only needed if the MyFa repo is made private
@@ -322,6 +324,11 @@ def process(sv_path: Path, targets_path: Path, cfg, history, args, first=False):
         advice = ask_claude(BRIEF_PATH.read_text(encoding="utf-8"), cfg)
         if advice:
             ADVICE_PATH.write_text(advice, encoding="utf-8")
+    if getattr(args, "guide", False):
+        import guide as guide_mod
+        print("Researching your guide with Claude (web search)... this takes about a minute.")
+        out = guide_mod.fetch_guide(cfg, result)
+        print(out["error"] if out.get("error") else f"Guide ready ({out.get('searches', 0)} web searches). See the Guide tab.")
     import html as _html
     REPORT_PATH.write_text(build(result, _html.escape(advice) if advice else None, str(CONFIG_PATH)), encoding="utf-8")
 
@@ -346,6 +353,7 @@ def main():
     ap.add_argument("--once", action="store_true", help="process once and exit instead of watching")
     ap.add_argument("--no-open", action="store_true", help="don't open the report in a browser")
     ap.add_argument("--ask-claude", action="store_true", help="ask Claude for a session plan (needs ANTHROPIC_API_KEY)")
+    ap.add_argument("--guide", action="store_true", help="research a gold/profession guide with Claude (needs an API key)")
     ap.add_argument("--update", action="store_true", help="check GitHub for a new MyFA version and install it")
     ap.add_argument("--no-update", action="store_true", help="skip the update check this time")
     ap.add_argument("--version", action="store_true", help="print the installed version")
