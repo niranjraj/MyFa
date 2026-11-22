@@ -26,6 +26,8 @@ MyFA Desk checks this repo's releases each time it starts. When a new version is
 
 ## Releasing a new version (maintainer)
 
-1. Update `CHANGELOG.md` with a `## X.Y.Z` section.
-2. Commit, then tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-3. The **Release** workflow checks the Lua and Python, stamps the version, builds the three zips and publishes the release. Everyone's Desk picks it up on its next start.
+1. Make the changes and add a `## X.Y.Z` section to `CHANGELOG.md`.
+2. Put the new number in `MyFA-Desk/VERSION` (for example `1.0.1`).
+3. Commit and push to `main`.
+
+The **Release** workflow sees the new version, checks the Lua and Python, stamps the version into the addon, builds the three zips and publishes release `vX.Y.Z`. Everyone's Desk picks it up on its next start. Pushing a `vX.Y.Z` tag, or running the workflow by hand from the Actions tab, also works.

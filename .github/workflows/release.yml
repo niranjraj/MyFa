@@ -1,10 +1,14 @@
 name: Release
 
-# Push a tag like v1.2.0 and this builds the zips and publishes a GitHub Release.
-# MyFA Desk checks the latest release on start and updates itself and the addon.
+# Publishes a GitHub Release whenever MyFA-Desk/VERSION changes on main (or a v* tag is pushed,
+# or you run it by hand from the Actions tab). MyFA Desk checks the latest release on start
+# and updates itself and the addon.
 on:
   push:
+    branches: [main]
+    paths: ["MyFA-Desk/VERSION", ".github/workflows/release.yml"]
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,14 +19,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Stamp version
+      - name: Work out version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(tr -d '[:space:]' < MyFA-Desk/VERSION)"
+          fi
+          TAG="v$VERSION"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $TAG already exists; nothing to do."
+            echo "SKIP=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Stamp version
+        if: env.SKIP != '1'
+        run: |
           sed -i "s/^## Version: .*/## Version: $VERSION/" MyFA/MyFA.toc
           echo "$VERSION" > MyFA-Desk/VERSION
 
       - name: Check Lua and Python
+        if: env.SKIP != '1'
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq lua5.1 > /dev/null
           for f in MyFA/*.lua MyFA/Data/*.lua; do luac5.1 -p "$f"; done
@@ -30,16 +51,18 @@ jobs:
           python3 -c "import json; json.load(open('MyFA-Desk/raids.json'))"
 
       - name: Build zips
+        if: env.SKIP != '1'
         run: |
           mkdir dist
-          zip -rq "dist/MyFA-${GITHUB_REF_NAME}.zip" MyFA
-          zip -rq "dist/MyFA-Desk-${GITHUB_REF_NAME}.zip" MyFA-Desk -x '*__pycache__*'
-          zip -rq "dist/MyFA-Kit-${GITHUB_REF_NAME}.zip" MyFA MyFA-Desk -x '*__pycache__*'
+          zip -rq "dist/MyFA-$TAG.zip" MyFA
+          zip -rq "dist/MyFA-Desk-$TAG.zip" MyFA-Desk -x '*__pycache__*'
+          zip -rq "dist/MyFA-Kit-$TAG.zip" MyFA MyFA-Desk -x '*__pycache__*'
 
       - name: Publish release
+        if: env.SKIP != '1'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           NOTES=$(awk -v v="## $VERSION" '$0==v{f=1;next} /^## /{f=0} f' CHANGELOG.md)
-          [ -z "$NOTES" ] && NOTES="MyFA $GITHUB_REF_NAME"
-          gh release create "$GITHUB_REF_NAME" dist/*.zip --title "MyFA $GITHUB_REF_NAME" --notes "$NOTES"
+          [ -z "$NOTES" ] && NOTES="MyFA $TAG"
+          gh release create "$TAG" dist/*.zip --target "$GITHUB_SHA" --title "MyFA $TAG" --notes "$NOTES"
