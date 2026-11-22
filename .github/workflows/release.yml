@@ -6,7 +6,7 @@ name: Release
 on:
   push:
     branches: [main]
-    paths: ["MyFA-Desk/VERSION", ".github/workflows/release.yml"]
+    paths: ["MyFA-Desk/VERSION"]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -66,3 +66,11 @@ jobs:
           NOTES=$(awk -v v="## $VERSION" '$0==v{f=1;next} /^## /{f=0} f' CHANGELOG.md)
           [ -z "$NOTES" ] && NOTES="MyFA $TAG"
           gh release create "$TAG" dist/*.zip --target "$GITHUB_SHA" --title "MyFA $TAG" --notes "$NOTES"
+
+      - name: Upload the addon to CurseForge
+        if: env.SKIP != '1'
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_PROJECT_ID: ${{ vars.CF_PROJECT_ID }}
+          CF_GAME_VERSIONS: ${{ vars.CF_GAME_VERSIONS }}
+        run: python3 .github/scripts/curseforge_upload.py

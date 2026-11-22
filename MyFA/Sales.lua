@@ -42,18 +42,22 @@ function ns.SnapshotOwnedAuctions()
     local ok, list = pcall(AH.GetOwnedAuctions)
     if not ok or type(list) ~= "table" then return end
     local active = (Enum and Enum.AuctionStatus and Enum.AuctionStatus.Active) or 0
-    local items = {}
+    local items, auctions = {}, {}
     for _, a in ipairs(list) do
         local id = a.itemKey and a.itemKey.itemID
         if not id and a.itemLink then id = tonumber(a.itemLink:match("item:(%d+)")) end
         if id and (a.status == nil or a.status == active) then
-            items[id] = (items[id] or 0) + (a.quantity or 1)
+            local q = a.quantity or 1
+            items[id] = (items[id] or 0) + q
             ns.FillItemMeta(id)
+            -- commodities report the price per unit; single items the price of the auction
+            local unit = a.buyoutAmount and (ns.IsCommodity(id) and a.buyoutAmount or math.floor(a.buyoutAmount / math.max(q, 1)))
+            auctions[#auctions + 1] = { aid = a.auctionID, id = id, q = q, u = unit, tl = a.timeLeftSeconds }
         end
     end
     local c = ns.Char()
     c.listed = c.listed or {}
-    c.listed[ns.AHKind()] = { items = items, t = time() }
+    c.listed[ns.AHKind()] = { items = items, auctions = auctions, t = time() }
 end
 
 -- posting: record what you listed and what the deposit was ------------------------------------------

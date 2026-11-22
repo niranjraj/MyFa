@@ -76,7 +76,7 @@ local function summarize(listings)
     }
 end
 
-local function finish(realmKey, byItem, auctions)
+local function finish(realmKey, byItem, auctions, others)
     local realm = MyFA_DB.realms[realmKey] or { h = {} }
     MyFA_DB.realms[realmKey] = realm
     realm.h = realm.h or {}
@@ -85,6 +85,8 @@ local function finish(realmKey, byItem, auctions)
     local today = ns.Today()
     for itemID, listings in pairs(byItem) do
         local s = summarize(listings)
+        local o = others and others[itemID]
+        if o == nil then s.x = true elseif o ~= s.m then s.o = o end  -- x: only you list it; o: cheapest from someone else
         items[itemID] = s
         count = count + 1
         local h = realm.h[itemID]
@@ -127,7 +129,8 @@ local function read()
     end
     local myToken = token
     local realmKey = ns.MarketKey()  -- your faction's Auction House, or the neutral one
-    local byItem = {}
+    local byItem, others = {}, {}
+    local mine = ns.MyNames()
     local index, used = 0, 0
     scan.phase, scan.total, scan.done = "reading", total, 0
     refresh()
@@ -136,11 +139,14 @@ local function read()
         if myToken ~= token or scan.phase ~= "reading" then return end  -- cancelled meanwhile
         local last = math.min(index + BATCH, total) - 1
         for i = index, last do
-            local _, _, count, _, _, _, _, _, _, buyout, _, _, _, _, _, _, itemID = AH.GetReplicateItemInfo(i)
+            local _, _, count, _, _, _, _, _, _, buyout, _, _, _, owner, _, _, itemID = AH.GetReplicateItemInfo(i)
             if itemID and buyout and buyout > 0 and count and count > 0 then
                 local list = byItem[itemID]
                 if not list then list = {}; byItem[itemID] = list end
-                list[#list + 1] = { math.floor(buyout / count), count }
+                local unit = math.floor(buyout / count)
+                list[#list + 1] = { unit, count }
+                -- cheapest listing that isn't yours, for the undercut check
+                if not (owner and mine[owner]) and (not others[itemID] or unit < others[itemID]) then others[itemID] = unit end
                 used = used + 1
             end
         end
@@ -150,7 +156,7 @@ local function read()
             refresh()
             C_Timer.After(0, step)
         else
-            finish(realmKey, byItem, used)
+            finish(realmKey, byItem, used, others)
         end
     end
     step()

@@ -58,6 +58,19 @@ Items with fewer than 10 listed (often recipes and patterns) are thin markets. T
 - **Add flips by hand:** press **+ Add flip** on the My flips tab in game (or `/myfa add`), drop the item in or shift-click it, then enter quantity and price each. In MyFA Desk, use the **Add a flip** form on My flips. It suggests item names, and the flip reaches the game on your next /reload.
 - **Stop tracking** a flip with **Remove** on its row in Desk, or `/myfa forget [item]` in game. Turn alerts off with `/myfa alerts off`.
 
+## Posting and undercuts
+
+- **Sell tab:** each item to post shows MyFA's plan (price, quantity, duration). Press **Post** at the Auction House and MyFA fills in Blizzard's sell window; check it and press **Post** there.
+  - The price matches the cheapest other seller.
+  - It never goes below your floor: what you paid plus the cut and likely lost deposits, or the vendor price.
+  - Quantity is capped at about half of what's listed.
+  - Duration is the longest one whose deposit is worth risking for how often the item sells for you.
+  - A red SELL tag means the deposit is high for something that rarely sells.
+- **If you post through another addon's window** (The Market, say), the plan is also printed in chat: type those numbers there.
+- **Listed tab:** your auctions here, marked UNDERCUT (with a repost price), UNDER YOUR FLOOR (keep yours) or LOWEST.
+  - **Check prices** looks up live prices, one search at a time.
+  - **Cancel** cancels one auction per click. The deposit is lost and the items come back by mail; then post them again from the Sell tab.
+
 ## Profit from your sales
 
 - When an auction sells, expires or is cancelled, open a mailbox on that character. MyFA reads the mail, closes the flip it belongs to with the real profit, and records any deposit you lost. Type `/reload` and Desk's **Profit** tab shows:
@@ -149,6 +162,7 @@ Market value is set by where the bulk of supply sits, not by the cheapest listin
 | `deposit_rate` | 0.20 | Deposit as a share of vendor price until MyFA sees you post (the classic 8-hour rule). |
 | `default_sell_rate` | 0.6 | Share of listings assumed to sell until MyFA has your own sale mails. |
 | `neutral_max_age_days` | 7 | Ignore neutral prices older than this. |
+| `addon_updates` | auto | Who updates the in-game addon: `desk`, `curseforge`, or `auto` (CurseForge if you installed it from there). |
 
 Desk reloads the config on every scan, so there's no need to restart it.
 

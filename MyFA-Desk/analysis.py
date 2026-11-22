@@ -872,7 +872,8 @@ def analyse(sv, history: History, cfg, now=None):
         "neutral": neutral, "profit": profit,
         "risk": {"p0": riskm.p0, "p0_basis": riskm.p0_basis, "dep_rate": riskm.dep_rate, "dep_learned": riskm.dep_learned,
                  "units": {i: int(riskm.per_unit(i, "home")) for i in {r["id"] for r in positions} | {r["id"] for r in flips}
-                           if riskm.per_unit(i, "home") >= 1}},
+                           if riskm.per_unit(i, "home") >= 1},
+                 "rates": {r["id"]: round(riskm.rate(r["id"]), 2) for r in inventory if riskm.has_history(r["id"])}},
     }
 
 
@@ -1092,6 +1093,7 @@ def targets_table(result):
                     if m.get("realm", result["realm"]) == result["realm"]],
         "forgets": [{"id": int(k), "t": v} for k, v in (result["manual"].get("forgets") or {}).items()],
         "risk": result["risk"]["units"],
+        "rates": result["risk"].get("rates") or {},
         "neutral": neutral_targets(result),
     }
 

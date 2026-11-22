@@ -53,7 +53,18 @@ def _sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
 
 
-def apply_update(zip_path: Path, addon_dir: Path = None, desk_dir: Path = HERE):
+def addon_source(addon_dir, setting="auto"):
+    """Who updates the in-game addon: "curseforge" if you installed it from CurseForge (its copy says so), else Desk."""
+    if setting in ("desk", "curseforge"):
+        return setting
+    try:
+        toc = (Path(addon_dir) / "MyFA.toc").read_text(encoding="utf-8")
+    except (OSError, TypeError):
+        return "desk"
+    return "curseforge" if "X-MyFA-Source: curseforge" in toc else "desk"
+
+
+def apply_update(zip_path: Path, addon_dir: Path = None, desk_dir: Path = HERE, addon_via_cf=False):
     """Install a MyFA-Kit zip. Returns a list of notes for the user."""
     notes = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -69,7 +80,9 @@ def apply_update(zip_path: Path, addon_dir: Path = None, desk_dir: Path = HERE):
             raise ValueError("update zip has no MyFA-Desk folder")
 
         # addon: replace everything except the targets Desk writes
-        if addon_dir and new_addon.exists():
+        if addon_via_cf:
+            notes.append("In-game addon left to the CurseForge app: update MyFA there.")
+        elif addon_dir and new_addon.exists():
             addon_dir.mkdir(parents=True, exist_ok=True)
             for src in new_addon.rglob("*"):
                 rel = src.relative_to(new_addon)
@@ -115,7 +128,7 @@ def remember_shipped_raids():
         SHIPPED_RAIDS_HASH.write_text(_sha(mine))
 
 
-def check_and_update(addon_dir, mode="ask", token=None, force=False):
+def check_and_update(addon_dir, mode="ask", token=None, force=False, addon_via_cf=False):
     """Returns True if an update was installed (caller should restart)."""
     remember_shipped_raids()
     if mode == "never" and not force:
@@ -158,7 +171,7 @@ def check_and_update(addon_dir, mode="ask", token=None, force=False):
         else:
             data = _get(asset["browser_download_url"], accept="application/octet-stream", timeout=120)
         zpath.write_bytes(data)
-        notes = apply_update(zpath, addon_dir)
+        notes = apply_update(zpath, addon_dir, addon_via_cf=addon_via_cf)
     VERSION_FILE.write_text(tag.lstrip("vV") + "\n", encoding="utf-8")
     print(f"Updated to {tag}.")
     for n in notes:

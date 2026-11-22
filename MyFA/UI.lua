@@ -30,9 +30,10 @@ local panel, rows, tabs = nil, {}, {}
 -- what each tab is for, shown under the tab buttons
 local TAB_HINT = {
     buys = "Cheap listings worth buying to resell. Right: your profit after reselling. Press Buy, then Confirm.",
-    sells = "What to do with what you own, on every character. Right: what the whole stack is worth.",
+    sells = "What to do with what you own. Post fills in Blizzard's sell window with MyFA's price; you press Post there.",
     crafts = "Recipes you know that make a profit. Right: profit per craft. Open a profession window to add recipes.",
     mine = "Things you bought, tracked until you sell them. Right: profit if you sold now. You get an alert when it's time.",
+    listed = "Your auctions here. UNDERCUT means someone lists it cheaper. Check prices looks up live prices.",
 }
 local currentTab, offset = "buys", 0
 local pending -- { id, qty, max, state = "starting"|"confirm"|"buying", unit, total }
@@ -46,6 +47,7 @@ end
 -- at a neutral Auction House the Buy and Sell lists are the neutral ones
 local function list()
     if currentTab == "mine" then return ns.Positions() end
+    if currentTab == "listed" then return ns.MyAuctions() end
     local t = targets()
     if t and ns.AtNeutralAH() and currentTab ~= "crafts" then
         return (t.neutral and t.neutral[currentTab]) or {}
@@ -198,7 +200,19 @@ local function rowTooltip(self)
                       "Expected profit after the cut: " .. ns.Money(e.profit or 0) .. "." }
         end
     elseif currentTab == "sells" then
-        if e.action == "ah" then steps = { "Post " .. (e.qty or 0) .. " at " .. ns.Money(e.price) .. " each. Match the lowest price; don't undercut." }
+        if e.action == "ah" then
+            local plan = e.plan or ns.PostPlan(e.id, e)
+            if plan.price then
+                steps = { "Press Post: MyFA puts the item in Blizzard's sell window and fills in:",
+                          string.format("   price %s each, quantity %d, %s", ns.Money(plan.price), plan.qty, ns.DurationLabel(plan.dur)),
+                          "Check it, then press Post in that window. MyFA never posts for you.",
+                          string.format("Deposit about %s. Lowest worth posting at: %s.", ns.Money(plan.deposit or 0), ns.Money(plan.floor or 0)),
+                          string.format("Price from %s.", plan.source == "live" and "a live search" or "your last scan") }
+                for _, n in ipairs(plan.notes) do steps[#steps + 1] = n end
+                if plan.warn then steps[#steps + 1] = "|cffe8786b" .. plan.warn .. "|r" end
+            else
+                steps = { "Post " .. (e.qty or 0) .. " at " .. ns.Money(e.price) .. " each. Match the lowest price; don't undercut." }
+            end
         elseif e.action == "vendor" then steps = { "Sell to any vendor. The Auction House would pay less after the cut." }
         elseif e.action == "craft" then steps = { "Use it to craft " .. (e.into or "?") .. ". That's worth more than selling it raw. See the Craft tab." }
         else steps = { "Keep it for now. MyFA will move it to Sell when it's time." } end
@@ -206,6 +220,20 @@ local function rowTooltip(self)
     elseif currentTab == "crafts" then
         steps = { "Mats cost " .. ns.Money(e.cost) .. ", the result sells for " .. ns.Money(e.value) .. " after the cut.",
                   "Craft it, then post it at today's lowest price." }
+    elseif currentTab == "listed" then
+        steps = { string.format("You have %d listed in %d auction%s; your highest price is %s each.", e.qty, e.n, e.n == 1 and "" or "s", ns.Money(e.u or 0)) }
+        if e.status == "undercut" then
+            steps[#steps + 1] = "Someone lists it at " .. ns.Money(e.other) .. ". Buyers take theirs first."
+            steps[#steps + 1] = "Cancel cancels your highest-priced auction (one per click). The deposit is lost and the items come back by mail."
+            steps[#steps + 1] = "Then Post it from the Sell tab at " .. ns.Money(e.repost) .. "."
+        elseif e.status == "floor" then
+            steps[#steps + 1] = "Someone lists it at " .. ns.Money(e.other) .. ", under the lowest price worth selling at (" .. ns.Money(e.floor or 0) .. "). Reposting would lose money: let yours sit or wait it out."
+        elseif e.status == "lowest" then
+            steps[#steps + 1] = "Nobody is cheaper. Leave it."
+        else
+            steps[#steps + 1] = "No price data for it yet. Press Check prices."
+        end
+        steps[#steps + 1] = "Prices from " .. (e.source == "live" and "a live search." or "your last scan. Check prices for live ones.")
     elseif currentTab == "mine" then
         steps = { string.format("You paid %s each for %d.", ns.Money(e.cost), e.qty),
                   "Lowest now: " .. (e.now and ns.Money(e.now) or "not listed") .. ". MyFA alerts you at " .. ns.Money(e.target) .. ".",
@@ -263,7 +291,12 @@ local function buildRow(i)
     r.profit:SetJustifyH("RIGHT")
 
     r.search:SetScript("OnClick", function() if r.entry then ns.SearchAH(r.entry.name or ns.ItemName(r.entry.id)) end end)
-    r.buy:SetScript("OnClick", function() if r.entry then buyClicked(r.entry) end end)
+    r.buy:SetScript("OnClick", function()
+        if not r.entry then return end
+        if currentTab == "sells" then ns.PrepareSell(r.entry)
+        elseif currentTab == "listed" then ns.CancelOne(r.entry)
+        else buyClicked(r.entry) end
+    end)
     r:SetScript("OnEnter", rowTooltip)
     r:SetScript("OnLeave", function() GameTooltip:Hide() end)
     return r
@@ -305,10 +338,29 @@ local function updateRow(r, e)
         if e.action == "vendor" then what = tag(GREY, "VENDOR") .. "sell to a vendor"
         elseif e.action == "craft" then what = tag(GREEN, "CRAFT") .. "into " .. (e.into or "?")
         elseif e.action == "hold" then what = tag(BLUE, "KEEP") .. ((e.hold == "raid") and "for raid week" or "price rising")
-        else what = tag(GOLDC, "SELL") .. "post at " .. ns.Money(e.price) .. " each" end
-        r.detail:SetText(string.format("%s  %s%s|r", what, MUTED, e.loc or ("x" .. (e.qty or 0))))
+        else
+            local plan = ns.PostPlan(e.id, e)
+            e.plan = plan
+            what = (plan.warn and tag(RED, "SELL") or tag(GOLDC, "SELL")) .. (plan.price and ns.PlanText(plan) or ("post at " .. ns.Money(e.price) .. " each"))
+        end
+        r.detail:SetText(e.plan and e.action == "ah" and what or string.format("%s  %s%s|r", what, MUTED, e.loc or ("x" .. (e.qty or 0))))
         r.profit:SetText(ns.Money(e.value or 0))
-        if e.action ~= "ah" then r.search:Hide() end
+        if e.action ~= "ah" then
+            r.search:Hide()
+        elseif ahOpen() then
+            r.buy:SetText("Post"); r.buy:Enable(); r.buy:Show()
+        end
+    elseif currentTab == "listed" then
+        local state
+        if e.status == "undercut" then state = tag(RED, "UNDERCUT") .. "cheapest other " .. ns.Money(e.other)
+        elseif e.status == "floor" then state = tag(GOLDC, "UNDER YOUR FLOOR") .. "other " .. ns.Money(e.other) .. ", keep yours"
+        elseif e.status == "lowest" then state = tag(GREEN, "LOWEST") .. (e.other and ("next " .. ns.Money(e.other)) or "only you list it")
+        else state = tag(GREY, "NO PRICE") .. "press Check prices" end
+        r.detail:SetText(string.format("%s  %sx%d at %s|r", state, MUTED, e.qty, ns.Money(e.u or 0)))
+        r.profit:SetText(e.repost and (RED .. "repost " .. ns.Money(e.repost) .. "|r") or "")
+        if e.status == "undercut" and ahOpen() then
+            r.buy:SetText("Cancel"); r.buy:Enable(); r.buy:Show()
+        end
     elseif currentTab == "mine" then
         local state
         if e.ready then
@@ -425,16 +477,26 @@ function ns.RefreshPanel()
             hint = string.format("Last 7 days: %d sales, flip profit %s%s|r, deposits lost %s. /myfa profit for more.",
                 r.sales, r.flip >= 0 and GREEN .. "+" or RED, ns.Money(r.flip), ns.Money(r.lost))
         end
+    elseif currentTab == "listed" then
+        local busy, cur, left = ns.IsCheckingPrices()
+        if busy then
+            hint = string.format("Checking %s...  %d left. Searches only read prices.", cur and ns.ItemName(cur) or "", left)
+        end
     elseif ns.AtNeutralAH() and (currentTab == "buys" or currentTab == "sells") then
         hint = currentTab == "buys" and "Neutral Auction House: cheap here, worth more on your faction's Auction House. Buy, then carry or mail them home."
             or "What sells for more here than at home, after the 15% neutral cut and its higher deposits."
     end
     panel.hint:SetText(hint)
     panel.addFlip:SetShown(currentTab == "mine")
-    panel.footer:SetWidth(currentTab == "mine" and (PANEL_W - 140) or (PANEL_W - 28))
+    panel.check:SetShown(currentTab == "listed")
+    local busy, cur, left = ns.IsCheckingPrices()
+    panel.check:SetText(busy and "Stop" or "Check prices")
+    panel.check:SetEnabled(busy or ahOpen() and true or false)
+    panel.footer:SetWidth((currentTab == "mine" or currentTab == "listed") and (PANEL_W - 150) or (PANEL_W - 28))
     for key, tab in pairs(tabs) do
         local n
         if key == "mine" then n = #ns.Positions()
+        elseif key == "listed" then n = #ns.MyAuctions()
         elseif ns.AtNeutralAH() and key ~= "crafts" then n = #(((targets() or {}).neutral or {})[key] or {})
         else n = #((targets() or {})[key] or {}) end
         tab:SetText(tab.label .. " " .. n)
@@ -442,7 +504,10 @@ function ns.RefreshPanel()
     end
     if #data == 0 then
         local t = targets()
-        if currentTab == "mine" then
+        if currentTab == "listed" then
+            panel.empty:SetText("No auctions recorded at this Auction House.\n\nOpen the Auction House's Auctions tab once so MyFA can see "
+                .. "what you have listed. Then this tab shows which ones are undercut, and Check prices looks up live prices.")
+        elseif currentTab == "mine" then
             panel.empty:SetText("No tracked flips yet.\n\nAnything you buy on the Auction House is tracked automatically, "
                 .. "from any window or addon. You get an alert when it's worth selling.\n\n"
                 .. "Bought something earlier? Press + Add flip below.")
@@ -520,12 +585,13 @@ local function build()
     panel.scan:SetPoint("TOPRIGHT", -30, -14)
     panel.scan:SetScript("OnClick", function() ns.StartScan() end)
 
-    local tabDefs = { { "buys", "Buy" }, { "sells", "Sell" }, { "crafts", "Craft" }, { "mine", "My flips" } }
+    local tabDefs = { { "buys", "Buy", 66 }, { "sells", "Sell", 66 }, { "crafts", "Craft", 72 }, { "mine", "My flips", 94 },
+                      { "listed", "Listed", 82 } }
     local prev
     for _, def in ipairs(tabDefs) do
-        local b = makeButton(panel, def[2], 92)
+        local b = makeButton(panel, def[2], def[3])
         b.label = def[2]
-        if prev then b:SetPoint("LEFT", prev, "RIGHT", 6, 0) else b:SetPoint("TOPLEFT", 12, -84) end
+        if prev then b:SetPoint("LEFT", prev, "RIGHT", 5, 0) else b:SetPoint("TOPLEFT", 12, -84) end
         b:SetScript("OnClick", function()
             currentTab, offset = def[1], 0
             ns.RefreshPanel()
@@ -578,6 +644,16 @@ local function build()
         GameTooltip:Show()
     end)
     panel.addFlip:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    panel.check = makeButton(panel, "Check prices", 110)
+    panel.check:SetPoint("BOTTOMRIGHT", -12, 8)
+    panel.check:SetScript("OnClick", function() ns.CheckPrices() end)
+    panel.check:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Check prices")
+        GameTooltip:AddLine("Looks up the live lowest price of each item you have listed, one search at a time. It only reads prices: it never cancels or posts.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    panel.check:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     panel:SetScript("OnShow", function()
         panel.ticker = C_Timer.NewTicker(1, ns.RefreshHeader)

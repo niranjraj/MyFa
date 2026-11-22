@@ -111,6 +111,7 @@ class Desk:
         history = History(desk.DATA_DIR / "history.sqlite")
         args = types.SimpleNamespace(ask_claude=False, no_open=True)
         last = None
+        written = None
         while not self.stop.is_set():
             try:
                 if self.paused:
@@ -137,6 +138,9 @@ class Desk:
                 if self.reprocess.is_set():
                     self.reprocess.clear()
                     last = None
+                if written is not None and desk.targets_signature(targets) != written:
+                    last = None   # an addon update replaced the targets: write them again
+                    log("Targets were replaced (addon update?). Writing them again.")
                 if sig and sig != last:
                     time.sleep(1.0)  # let WoW finish writing
                     st2 = sv.stat()
@@ -147,6 +151,7 @@ class Desk:
                         if result:
                             self.result = result
                             self.report_ts = desk.REPORT_PATH.stat().st_mtime
+                            written = desk.targets_signature(targets)
                         last = sig
                 if sig:
                     self.state = "watching"
@@ -179,7 +184,8 @@ class Desk:
         self.update["busy"] = True
         try:
             addon_dir = Path(self.cfg["wow_path"]) / "Interface" / "AddOns" / "MyFA" if self.cfg.get("wow_path") else None
-            if updater.check_and_update(addon_dir, "always", self.cfg.get("github_token") or None, force=True):
+            via_cf = updater.addon_source(addon_dir, self.cfg.get("addon_updates", "auto")) == "curseforge"
+            if updater.check_and_update(addon_dir, "always", self.cfg.get("github_token") or None, force=True, addon_via_cf=via_cf):
                 log("Restarting MyFA Desk with the new version...")
                 self.restart_after_stop = True
                 threading.Thread(target=self.shutdown, daemon=True).start()
@@ -225,6 +231,7 @@ class Desk:
                 "ah_cut": self.cfg.get("ah_cut", 0.05),
                 "desktop_notifications": bool(self.cfg.get("desktop_notifications", True)),
                 "auto_update": self.cfg.get("auto_update", "ask"),
+                "addon_updates": self.cfg.get("addon_updates", "auto"),
             },
             "windows": os.name == "nt",
             "guide": dict(self.guide, has_key=bool(guide_mod.api_key(self.cfg)), provider=guide_mod.provider(self.cfg),
@@ -256,6 +263,8 @@ class Desk:
             cfg["desktop_notifications"] = bool(data["desktop_notifications"])
         if data.get("auto_update") in ("ask", "always", "never"):
             cfg["auto_update"] = data["auto_update"]
+        if data.get("addon_updates") in ("auto", "desk", "curseforge"):
+            cfg["addon_updates"] = data["addon_updates"]
         if data.get("guide_source") in ("auto", "claude_code", "chat", "api"):
             cfg["guide_source"] = data["guide_source"]
         if "anthropic_api_key" in data and data["anthropic_api_key"] != "__keep__":
@@ -787,6 +796,14 @@ CONTROL_HTML = r"""
             <option value="never">Never check</option>
           </select>
         </div>
+        <div class="field">
+          <label for="c-addonsrc">In-game addon updated by</label>
+          <select id="c-addonsrc" style="max-width:260px">
+            <option value="auto">Automatic (CurseForge app if it came from there)</option>
+            <option value="desk">MyFA Desk</option>
+            <option value="curseforge">CurseForge app</option>
+          </select>
+        </div>
         <div class="row" style="align-items:center">
           <button type="submit" class="cbtn primary">Save settings</button>
           <button type="button" class="cbtn" id="c-shortcut">Add MyFA to desktop</button>
@@ -823,6 +840,7 @@ CONTROL_HTML = r"""
     $('c-notify').checked = st.desktop_notifications;
     $('c-notify').closest('.field').hidden = !s.windows;
     $('c-auto').value = st.auto_update;
+    if ($('c-addonsrc')) $('c-addonsrc').value = st.addon_updates || 'auto';
     if (s.guide) {
       $('c-guide').value = s.guide.source || 'auto';
       $('c-key').placeholder = s.guide.has_key ? 'Saved (type to replace)' : 'sk-ant-...';
@@ -906,7 +924,7 @@ CONTROL_HTML = r"""
     e.preventDefault();
     const r = await post('/api/settings', {
       wow_path: $('c-wow').value, account: $('c-account').value, ah_cut: $('c-cut').value,
-      desktop_notifications: $('c-notify').checked, auto_update: $('c-auto').value,
+      desktop_notifications: $('c-notify').checked, auto_update: $('c-auto').value, addon_updates: $('c-addonsrc').value,
       guide_source: $('c-guide').value, anthropic_api_key: $('c-key').value || '__keep__' });
     if (r.ok) { formDirty = false; $('c-errors').hidden = true; $('c-saved').textContent = 'Saved'; $('c-saved').hidden = false;
                 setTimeout(() => $('c-saved').hidden = true, 2500); poll(); }

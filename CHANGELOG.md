@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.7.0
+- **Posting helper.** Rows on the Sell tab show MyFA's plan, for example *post 20 at 3s 61c, 24 Hours*. Press **Post** and MyFA puts the item in Blizzard's sell window and fills in the price, quantity and duration; you check it and press Post there. MyFA never posts for you.
+  - **Price:** the cheapest listing from another seller (live when your Auction House window has just searched it), never below your floor. The floor is what you paid plus the cut and likely lost deposits, or the vendor price for things you didn't buy.
+  - **Quantity:** at most about half of what's listed, so you don't flood the market.
+  - **Duration:** the longest one whose deposit you can afford to lose, given how often the item sells for you.
+  - **Warning:** shown when the deposit is too high for something that rarely sells, with what a vendor pays instead.
+- **Listed tab: undercut check.** Shows your auctions at this Auction House and flags the ones someone lists cheaper (UNDERCUT, with a "repost at" price), the ones where the cheaper seller is under your floor (keep yours), and the ones where you're the lowest.
+  - **Check prices** looks up live prices, one search at a time with a pause between them. It only reads prices.
+  - **Cancel** cancels one auction per click.
+  - Opening the Auction House tells you in chat if any of your auctions look undercut.
+- Full scans now note the cheapest listing from someone other than you, so your own auctions don't hide an undercut.
+- **CurseForge ready:**
+  - Desk now also keeps your targets in a small **MyFA_Desk** folder next to the addon, so addon updates (including the CurseForge app's) don't wipe them. If they are replaced, Desk writes them again.
+  - New setting **In-game addon updated by** (Automatic / MyFA Desk / CurseForge app). On Automatic, Desk leaves the addon alone when it came from CurseForge.
+  - Releases upload the addon to CurseForge automatically once the token and project ID are set (see README).
+
 ## 1.6.0
 - **Real profit from your sales.** When you open a mailbox, MyFA now reads "Auction successful", "Auction expired" and "Auction cancelled" mails as well as "Auction won":
   - A sale closes your flip with the real profit, after the cut, against what you paid (oldest purchases first). Chat shows it, for example *SOLD 6 Wild Steelbloom for 1g 42s after the cut: +46s 50c on your flip.*

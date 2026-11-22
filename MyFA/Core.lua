@@ -1,6 +1,6 @@
 -- MyFA Core: saved data, character snapshot (bags, gold, recipes, vendor prices), slash commands.
 local ADDON, ns = ...
-ns.VERSION = "1.6.0"
+ns.VERSION = "1.7.0"
 ns.HISTORY_DAYS = 14
 
 local DB_DEFAULTS = {
@@ -144,6 +144,24 @@ function ns.FillItemMeta(itemID)
         C_Item.RequestLoadItemDataByID(itemID)
     end
     return false
+end
+
+function ns.IsCommodity(id)
+    if C_AuctionHouse and C_AuctionHouse.GetItemCommodityStatus and Enum and Enum.ItemCommodityStatus then
+        local ok, st = pcall(C_AuctionHouse.GetItemCommodityStatus, id)
+        if ok and st == Enum.ItemCommodityStatus.Commodity then return true end
+        if ok and st == Enum.ItemCommodityStatus.Item then return false end
+    end
+    local meta = MyFA_DB.items[id]
+    return meta ~= nil and (meta.s or 1) > 1
+end
+
+-- names of your characters on this realm, to tell your own auctions from other sellers'
+function ns.MyNames()
+    local names = {}
+    for key in pairs(MyFA_DB.chars) do names[(key:match("^([^-]+)")) or key] = true end
+    names[UnitName("player") or "?"] = true
+    return names
 end
 
 function ns.ItemName(itemID)

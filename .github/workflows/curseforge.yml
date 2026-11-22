@@ -1,0 +1,32 @@
+name: Upload to CurseForge
+
+# Run this by hand (Actions tab > Upload to CurseForge > Run workflow) to upload the current version, for example
+# the first time, after you add the CF_API_TOKEN secret and CF_PROJECT_ID variable. New releases upload on their own.
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: "release, beta or alpha"
+        default: "release"
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Lua
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.1 > /dev/null
+          for f in MyFA/*.lua MyFA/Data/*.lua; do luac5.1 -p "$f"; done
+      - name: Upload
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_PROJECT_ID: ${{ vars.CF_PROJECT_ID }}
+          CF_GAME_VERSIONS: ${{ vars.CF_GAME_VERSIONS }}
+          CF_RELEASE_TYPE: ${{ inputs.release_type }}
+        run: |
+          if [ -z "$CF_API_TOKEN" ] || [ -z "$CF_PROJECT_ID" ]; then
+            echo "::error::Add the CF_API_TOKEN secret and the CF_PROJECT_ID variable first (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+          python3 .github/scripts/curseforge_upload.py

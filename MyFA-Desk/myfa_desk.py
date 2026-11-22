@@ -68,6 +68,7 @@ DEFAULTS = {
     "desktop_notifications": True,  # Windows notification when a flip becomes worth selling
     "auto_update": "ask",        # "ask", "always" or "never": check GitHub for a new MyFA release at start
     "github_token": "",          # only needed if the MyFa repo is made private
+    "addon_updates": "auto",     # "auto", "desk" or "curseforge": who updates the in-game addon (auto = CurseForge if installed from there)
 }
 
 
@@ -167,13 +168,53 @@ def setup(cfg, args):
 
 # ---------------------------------------------------------------- outputs
 
-def write_targets(result, path: Path):
+def _atomic_write(path: Path, text: str):
     path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def companion_dir(path: Path):
+    """Interface/AddOns/MyFA_Desk: a tiny data-only addon next to MyFA. Addon updates (including the CurseForge
+    app, which replaces the whole MyFA folder) never touch it, so your targets survive them."""
+    if path.parent.name == "Data" and path.parent.parent.name == "MyFA":
+        return path.parent.parent.parent / "MyFA_Desk"
+    return None
+
+
+def write_targets(result, path: Path):
     body = ("-- Written by MyFA Desk " + time.strftime("%Y-%m-%d %H:%M") + ". Overwritten on every run.\n"
             "MyFA_Targets = " + to_lua(targets_table(result)) + "\n")
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(body, encoding="utf-8")
-    os.replace(tmp, path)
+    _atomic_write(path, body)
+    comp = companion_dir(path)
+    if comp:
+        iface = "16001"
+        try:
+            for line in (path.parent.parent / "MyFA.toc").read_text(encoding="utf-8").splitlines():
+                if line.startswith("## Interface:"):
+                    iface = line.split(":", 1)[1].strip()
+        except OSError:
+            pass
+        toc = (f"## Interface: {iface}\n## Title: MyFA Desk data\n"
+               "## Notes: Buy, sell and craft targets written by the MyFA Desk app. Keep it enabled together with MyFA.\n"
+               f"## Author: MyFA\n## Version: {updater.local_version()}\n\nTargets.lua\n")
+        toc_path = comp / "MyFA_Desk.toc"
+        if not toc_path.exists() or toc_path.read_text(encoding="utf-8") != toc:
+            _atomic_write(toc_path, toc)
+        _atomic_write(comp / "Targets.lua", body)
+
+
+def targets_signature(path: Path):
+    """Changes if something other than Desk rewrote or removed the targets (an addon update, for example)."""
+    out = []
+    for f in (path, (companion_dir(path) or path.parent) / "Targets.lua"):
+        try:
+            st = f.stat()
+            out.append((st.st_mtime, st.st_size))
+        except OSError:
+            out.append(None)
+    return tuple(out)
 
 
 def brief(result):
@@ -389,7 +430,8 @@ def main():
         addon_dir = targets_path.parent.parent if not args.sv else (
             Path(cfg["wow_path"]) / "Interface" / "AddOns" / "MyFA" if cfg.get("wow_path") else None)
         mode = "always" if args.update else cfg.get("auto_update", "ask")
-        if updater.check_and_update(addon_dir, mode, cfg.get("github_token") or None, force=args.update):
+        via_cf = updater.addon_source(addon_dir, cfg.get("addon_updates", "auto")) == "curseforge"
+        if updater.check_and_update(addon_dir, mode, cfg.get("github_token") or None, force=args.update, addon_via_cf=via_cf):
             print("Restarting MyFA Desk...\n")
             rest = [a for a in sys.argv[1:] if a != "--update"]
             sys.exit(subprocess.call([sys.executable, str(Path(__file__).resolve()), *rest]))
@@ -401,6 +443,7 @@ def main():
         print("No MyFA data yet. In game: open the Auction House, press Full scan, then /reload.")
 
     last = None
+    written = None
     first = True
     if args.once:
         process(sv_path, targets_path, cfg, history, args, first=True)
@@ -413,6 +456,8 @@ def main():
                 sig = (st.st_mtime, st.st_size)
             except OSError:
                 sig = None
+            if written is not None and targets_signature(targets_path) != written:
+                last = None   # targets were replaced or removed (an addon update): write them again
             if sig and sig != last:
                 time.sleep(1.0)  # let WoW finish writing
                 try:
@@ -424,6 +469,7 @@ def main():
                 cfg = load_config()
                 if process(sv_path, targets_path, cfg, history, args, first=first):
                     first = False
+                    written = targets_signature(targets_path)
                 last = sig
             time.sleep(2.0)
     except KeyboardInterrupt:
