@@ -39,7 +39,7 @@ DEFAULTS = {
     "min_profit": 5000,          # copper per flip target (5000 = 50s)
     "min_roi": 0.15,             # at least 15% return after the cut
     "min_vendor_profit": 100,    # copper (1s)
-    "flip_threshold": 0.7,       # buy units listed under 70% of market
+    "flip_threshold": 0.7,       # no longer used for flips (they relist where you'd be the cheapest seller); kept for old configs
     "max_supply_share": 0.35,    # never buy more than 35% of everything listed for an item
     "max_spend_fraction": 0.3,   # never spend more than 30% of your gold on one item
     "max_targets": 40,

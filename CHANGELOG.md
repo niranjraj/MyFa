@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.2
+- **Flips now relist at a price that sells.** Before, MyFA bought what was listed under 70% of a "market" price and told you to relist at that market price. Cheaper listings were still there, so yours didn't sell. Now:
+  - MyFA works out which cheap listings to buy so that, afterwards, **you are the cheapest seller**.
+  - **Relist at** is the next listing left after your purchase, never above where the item usually bottoms out (its typical daily lowest price over the last two weeks).
+  - It only suggests a flip if you can buy everything under your relist price (within your supply and gold limits).
+  - The reason now says exactly that, for example *"Buy all 20 listed at up to 3s. That leaves 6s 50c as the cheapest listing: relist at 6s 50c and yours sell first."*
+- The same realistic price is used for neutral AH trades (match the cheapest listing there, capped by its usual low) and raid buys (no more "+15%" guess).
+- My flips: **Aim to sell at** now matches the cheapest listing (never under your alert price) instead of a higher market estimate.
+- `flip_threshold` is no longer used for flips.
+
 ## 1.7.1
 - **How long your auctions have been up.** The Listed tab (and Desk's new **Your auctions** table on My flips) shows:
   - how long you've been trying to sell each item, counted back through relists to your last sale;

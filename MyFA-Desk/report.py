@@ -813,7 +813,7 @@ def build(result, advice=None, config_path=""):
         "<code>/myfa bought [Golden Sansam] 20 14s50c</code>."),
         f"Items you bought and still hold on any character, bags, bank or mailbox. <em>Alert at</em> is the lowest listing "
         f"that clears {roi_pct}% profit after the {cut_pct} cut. MyFA alerts you in game and here when it's reached. "
-        f"<em>Aim to sell at</em> is the higher of that, the market value and the item's usual high. "
+        f"<em>Aim to sell at</em> matches the cheapest listing now (that's what buyers take), never under your alert price. "
         f"Change the {roi_pct}% in game with <code>/myfa roi 20</code>."))
     pr = result.get("profit") or {}
     sales_n = sum(1 for r in pr.get("trades", []) if r["kind"] == "sold")
@@ -829,9 +829,10 @@ def build(result, advice=None, config_path=""):
             ("Relist at", "n", "num"), ("Profit", "n", "num"), ("ROI", "n", "num"), ("Listed", "n", "num"),
             ("Risk", "n", ""), ("Sells", "n", "num"), ("Why", "s", "why")], flips_rows,
             "No flips pass your filters right now. With fewer than 3 days of scans, flips come only from price gaps "
-            "inside one scan, so scan once a day. Lowering <code>min_profit</code> or raising <code>flip_threshold</code> "
+            "inside one scan, so scan once a day. Lowering <code>min_profit</code> or <code>min_roi</code> "
             "in config.json shows more."),
-         f"Units listed under {int(cfg['flip_threshold'] * 100)}% of market. Items with fewer than {cfg['min_listed']} listed are thin markets: "
+         f"Buy the cheapest listings up to <em>Buy up to</em>, then relist at <em>Relist at</em>: the next listing left after you buy, "
+         f"so yours are the cheapest, and never above where the item usually bottoms out. Items with fewer than {cfg['min_listed']} listed are thin markets: "
          f"they're marked high risk, listed last, and left off the in-game Buy list. Profit is after the {cut_pct} AH cut, "
          f"capped at {int(cfg['max_supply_share'] * 100)}% of supply and {int(cfg['max_spend_fraction'] * 100)}% of your gold per item. "
          "Falling items are marked high risk. <em>Sells</em> is the share of listings MyFA expects to sell, from your own sale mails "

@@ -129,6 +129,36 @@ def _wall(ladder, total, share=0.2):
     return ladder[-1][0] if ladder else None
 
 
+def plan_flip(ladder, cut, risk_u, min_roi, typical=None, cap=None):
+    """The flip you can really sell: buy the cheapest listings up to some price level, then relist at the next
+    listing that's left (you're now the cheapest seller), never above where the item usually bottoms out.
+
+    ladder: [[price, cumulative qty], ...] cheapest first. typical: the usual daily lowest price (history).
+    Returns the most profitable plan, or None. Every level bought must clear min_roi at that resale price,
+    and you must be able to buy all of it (cap): otherwise cheaper listings would still sit under yours.
+    """
+    best = None
+    prev = units = cost = 0
+    for k in range(len(ladder) - 1):
+        price, cum = ladder[k]
+        q = cum - prev
+        prev = cum
+        units += q
+        cost += q * price
+        if cap is not None and units > cap:
+            break
+        nxt = ladder[k + 1][0]
+        resale = min(nxt, typical) if typical else nxt
+        net = resale * (1 - cut) - risk_u
+        if price > net / (1 + min_roi):
+            continue   # a higher next listing might still make it work
+        profit = net * units - cost
+        if not best or profit > best["profit"]:
+            best = {"units": units, "cost": cost, "top": price, "resale": int(resale), "next": nxt,
+                    "profit": profit, "net": net, "capped_by_history": bool(typical and typical < nxt)}
+    return best
+
+
 def trend(points):
     """Trend stats from daily points [day, lowest, market, listed]."""
     vals = [(p[0], p[2] or p[1]) for p in points if (p[2] or p[1])]
@@ -202,6 +232,13 @@ def analyse(sv, history: History, cfg, now=None):
         vals = [p[2] or p[1] for p in series.get(i, []) if p[0] >= cutoff and (p[2] or p[1])]
         return (statistics.median(vals), len(vals)) if vals else (None, 0)
 
+    def typical_low(i):
+        """(median of the daily lowest price over history_days, days): where the item usually bottoms out,
+        which is the price buyers actually pay."""
+        cutoff = today - int(cfg["history_days"])
+        lows = [p[1] for p in series.get(i, []) if p[0] >= cutoff and p[1]]
+        return (statistics.median(lows), len(lows)) if lows else (None, 0)
+
     def market(i):
         """Best estimate of what an item sells for: history when we have it, current scan otherwise."""
         h, days = hist(i)
@@ -246,46 +283,43 @@ def analyse(sv, history: History, cfg, now=None):
         total = s.get("q") or 0
         if len(ladder) < 2 or total < 2:
             continue
-        wall = _wall(ladder, total)
-        h, days = hist(i)
-        ref = min(h, wall) if days >= 3 else wall
-        if not ref:
-            continue
-        units, cost, top = _units_below(ladder, ref * float(cfg["flip_threshold"]))
-        if units <= 0:
-            continue
-        avg = cost / units
+        low, low_days = typical_low(i)
         cap = max(1, int(total * float(cfg["max_supply_share"])))
-        if avg > 0 and budget != float("inf"):
-            cap = min(cap, int(budget // avg))
-        units = min(units, cap)
-        if units <= 0:
-            continue
+        if budget != float("inf") and ladder[0][0] > 0:
+            cap = min(cap, int(budget // ladder[0][0]))
         risk_u = riskm.per_unit(i, "home")
-        net = ref * (1 - cut) - avg - risk_u
-        profit = int(net * units)
-        roi = net / avg if avg else 0
+        plan = plan_flip(ladder, cut, risk_u, float(cfg["min_roi"]), low if low_days >= 3 else None, cap)
+        if not plan:
+            continue
+        units, cost, avg = plan["units"], plan["cost"], plan["cost"] / plan["units"]
+        profit = int(plan["profit"])
+        roi = (plan["net"] - avg) / avg if avg else 0
         if profit < cfg["min_profit"] or roi < cfg["min_roi"]:
             continue
-        basis = f"{days}-day history" if days >= 3 else "price gap in this scan"
-        risk = "low" if days >= 7 and total >= 40 else ("medium" if days >= 3 else "high")
         thin = total < int(cfg["min_listed"])
+        risk = "low" if low_days >= 7 and total >= 40 else ("medium" if low_days >= 3 else "high")
         t = trends.get(i)
-        if t and t["slope"] is not None and t["slope"] < -0.05:
+        falling = t and t["slope"] is not None and t["slope"] < -0.05
+        if falling or thin:
             risk = "high"
-            basis += f", but falling {t['slope'] * 100:.0f}%/day"
+        if plan["capped_by_history"]:
+            where = (f"The next listing left would be {fmt(plan['next'])}, but it usually bottoms out around {fmt(low)}, "
+                     f"so relist at {fmt(plan['resale'])}.")
+        else:
+            where = f"That leaves {fmt(plan['next'])} as the cheapest listing: relist at {fmt(plan['resale'])} and yours sell first."
+        if low_days < 3:
+            where += " Based on one scan only; scan daily so MyFA knows where it usually trades."
         flips.append({
             "id": i, "name": name(i), "q": quality(i), "kind": "snipe" if thin else "flip",
-            "max": int(min(top, avg * 1.02)), "qty": units, "avg": int(avg), "sell": int(ref),
-            "profit": profit, "roi": round(roi, 3), "listed": total, "days": days, "risk": risk,
-            "why": (f"Thin market: only {total} listed, so it may take a long time to sell at {fmt(ref)}. "
-                    f"Only for patience or your own use." if thin else
-                    f"{units} listed under {int(cfg['flip_threshold'] * 100)}% of market ({basis}). "
-                    f"Relist at {fmt(ref)}; {int(cut * 100)}% AH cut included.") + riskm.note(i, "home", units),
+            "max": int(plan["top"]), "qty": units, "avg": int(avg), "sell": plan["resale"],
+            "profit": profit, "roi": round(roi, 3), "listed": total, "days": low_days, "risk": risk,
+            "why": (f"Thin market: only {total} listed, so it may take a long time to sell. Only for patience or your own use. "
+                    if thin else "") +
+                   f"Buy all {units} listed at up to {fmt(plan['top'])}. {where}"
+                   + (f" Falling about {-t['slope'] * 100:.0f}% a day." if falling else "")
+                   + f" {int(cut * 100)}% cut included." + riskm.note(i, "home", units),
             "risk_unit": int(risk_u), "sell_rate": round(riskm.rate(i), 2),
         })
-        if thin:
-            flips[-1]["risk"] = "high"
     flips.sort(key=lambda r: (r["kind"] == "snipe", -r["profit"]))
     flips = flips[: cfg["max_targets"]]
 
@@ -665,7 +699,8 @@ def analyse(sv, history: History, cfg, now=None):
     # raid buys become in-game targets too
     for r in raid_plan:
         if r["action"] == "Buy" and r["qty"] > 0 and r["id"]:
-            sell_ref = r["sell"] or int((r["market"] or r["now"]) * 1.15)
+            # the band's high is where it bottoms out on good days: a realistic raid-week price, not a wish
+            sell_ref = r["sell"] or int(r["market"] or r["now"])
             profit = int((sell_ref * (1 - cut) - r["now"] - riskm.per_unit(r["id"], "home")) * r["qty"])
             if profit > 0 and not any(f["id"] == r["id"] for f in flips):
                 flips.append({
@@ -739,7 +774,9 @@ def analyse(sv, history: History, cfg, now=None):
         target = math.ceil((cost * (1 + roi) + risk_u) / (1 - cut))
         mk = market(i)
         b = band(i)
-        suggest = max(target, b["sell"] if b else 0, mk or 0)
+        low, low_days = typical_low(i)
+        # match the cheapest listing (that's what sells), but never under your alert price
+        suggest = max(target, now_p if now_p else (int(low) if low_days >= 3 else (mk or 0)))
         pl = int((now_p * (1 - cut) - cost - risk_u) * hold) if now_p else None
         if now_p is None:
             status = "Not listed"
@@ -838,7 +875,7 @@ def analyse(sv, history: History, cfg, now=None):
     my_auctions.sort(key=lambda r: (order_a[r["status"]], -(r["u"] * r["qty"])))
 
     # ---- neutral Auction House: a separate market both factions share ---------------------------------
-    neutral = neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, hist, meta, name, quality,
+    neutral = neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, typical_low, meta, name, quality,
                              riskm, cut, budget, inventory, flips)
 
     # ---- realized profit from your sales -------------------------------------------------------------
@@ -945,7 +982,7 @@ def analyse(sv, history: History, cfg, now=None):
     }
 
 
-def neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, hist, meta, name, quality, risk, cut,
+def neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, typical_low, meta, name, quality, risk, cut,
                    budget, inventory, flips):
     """Trades between your faction's Auction House and the neutral one (Gadgetzan, Booty Bay, Everlook).
 
@@ -971,22 +1008,23 @@ def neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, h
     thin = max(3, int(cfg["min_listed"]) // 2)
     age_note = f" Neutral prices are {age:.0f} days old; rescan there before you go." if age >= 2 else ""
 
+    # where you'd sell: matching the cheapest listing there now, never above where it usually bottoms out
     def ref(s_, series_pts):
         if not s_:
             return None
-        wall = _wall(s_.get("l") or [], s_.get("q") or 0)
-        vals = [p_[2] or p_[1] for p_ in series_pts if (p_[2] or p_[1])]
-        if len(vals) >= 3 and wall:
-            return min(statistics.median(vals), wall)
-        return wall or robust_market(s_)
+        now_low = s_.get("o") or s_.get("m")
+        lows = [p_[1] for p_ in series_pts if p_[1]]
+        if len(lows) >= 3 and now_low:
+            return min(statistics.median(lows), now_low)
+        return now_low
 
     def home_ref(i):
         s_ = scan.get(i)
         if not s_:
             return None
-        wall = _wall(s_.get("l") or [], s_.get("q") or 0)
-        h, days = hist(i)
-        return min(h, wall) if days >= 3 and wall else wall
+        now_low = s_.get("o") or s_.get("m")
+        low, days = typical_low(i)
+        return min(low, now_low) if days >= 3 and now_low else now_low
 
     def skip_gear(i):
         return (meta.get(i) or {}).get("e") and not cfg["include_gear"]
@@ -1018,8 +1056,8 @@ def neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, h
             "id": i, "name": name(i), "q": quality(i), "kind": "tohome", "max": int(min(top, avg * 1.02)), "qty": units,
             "avg": int(avg), "sell": int(sell), "profit": profit, "roi": round(roi, 3), "listed": hs.get("q", 0),
             "nlisted": ns_.get("q", 0),
-            "why": (f"{units} on the neutral AH under {fmt(per_unit / (1 + min_roi))}; your Auction House holds it at "
-                    f"{fmt(sell)}. Buy at the neutral AH, then carry or mail it home and post there. "
+            "why": (f"{units} on the neutral AH under {fmt(per_unit / (1 + min_roi))}; at home the cheapest is about "
+                    f"{fmt(sell)}. Buy at the neutral AH, carry or mail it home and post at that price. "
                     f"Your {int(cut * 100)}% cut included." + risk.note(i, "home", units) + age_note),
         })
 
@@ -1051,8 +1089,8 @@ def neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, h
             "id": i, "name": name(i), "q": quality(i), "kind": "toneutral", "max": int(min(top, avg * 1.02)), "qty": units,
             "avg": int(avg), "sell": int(sell), "profit": profit, "roi": round(roi, 3), "listed": hs.get("q", 0),
             "nlisted": ns_.get("q", 0),
-            "why": (f"{units} here under {fmt(per_unit / (1 + min_roi))}; the neutral AH holds it at {fmt(sell)} "
-                    f"({ns_.get('q', 0)} listed). After its {int(ncut * 100)}% cut that still pays. "
+            "why": (f"{units} here under {fmt(per_unit / (1 + min_roi))}; on the neutral AH the cheapest is about {fmt(sell)} "
+                    f"({ns_.get('q', 0)} listed). Post at that price; after its {int(ncut * 100)}% cut that still pays. "
                     f"Take them to Gadgetzan, Booty Bay or Everlook, or mail them to a character parked there."
                     + risk.note(i, "neutral", units) + age_note),
         })
