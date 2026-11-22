@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.2
+- Purchases show in My flips straight away. Bought items wait in the mailbox, and MyFA used to hide a flip until it saw them there. Now anything bought since you last opened the mailbox counts as "on its way, mail".
+- Backup purchase tracking: when you open the mailbox, MyFA reads your "Auction won" mails (item, quantity, price paid) and records any purchase it missed. This covers buys made through another auction addon that MyFA's hook can't see. Purchases it already recorded aren't added twice, and "sold" mails are ignored.
+- `/myfa status` shows your MyFA version and when the last purchase was recorded.
+
 ## 1.5.1
 - Starting MyFA Desk while it's already running now checks the running copy:
   - **Same version, answering:** it just opens its dashboard. Only one copy ever runs.

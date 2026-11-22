@@ -1,6 +1,6 @@
 -- MyFA Core: saved data, character snapshot (bags, gold, recipes, vendor prices), slash commands.
 local ADDON, ns = ...
-ns.VERSION = "1.5.1"
+ns.VERSION = "1.5.2"
 ns.HISTORY_DAYS = 14
 
 local DB_DEFAULTS = {
@@ -223,6 +223,7 @@ function ns.SnapshotMail()
     end
     c.mail = mail
     c.mailT = time()
+    if ns.ReadPurchaseMail then ns.ReadPurchaseMail() end
 end
 
 -- Everything you own, across every character on this Auction House --------------
@@ -454,8 +455,10 @@ SlashCmdList.MYFA = function(msg)
             ns.Print("no targets loaded yet. Run MyFA Desk, then /reload.")
         end
         local n = ns.Positions and #ns.Positions() or 0
-        ns.Print(string.format("tracking %d flips; alerts %s at %d%% profit.", n,
-            MyFA_DB.settings.alerts and "on" or "off", math.floor(MyFA_DB.settings.roi * 100 + 0.5)))
+        ns.Print(string.format("tracking %d flips; alerts %s at %d%% profit. MyFA %s.", n,
+            MyFA_DB.settings.alerts and "on" or "off", math.floor(MyFA_DB.settings.roi * 100 + 0.5), ns.VERSION))
+        ns.Print(MyFA_DB.lastBuyT and string.format("last purchase recorded %d min ago.", math.floor((time() - MyFA_DB.lastBuyT) / 60))
+            or "no purchases recorded yet. Buy something, or open your mailbox so MyFA can read your Auction won mails.")
     elseif cmd == "bought" or cmd == "forget" then
         local itemID = tonumber(rest:match("item:(%d+)")) or tonumber(rest:match("^(%d+)"))
         local after = rest:gsub("|c%x+|H.-|h.-|h|r", ""):gsub("^%d+", "")

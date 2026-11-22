@@ -8,13 +8,30 @@ local GREEN, MUTED = "|cff6fd08a", "|cffa9a59a"
 
 -- recording ---------------------------------------------------------------------
 
-function ns.RecordBuy(itemID, qty, unit, manual)
+-- a purchase we already have (same item, amount and price within a few days): don't record it twice
+local function alreadyRecorded(itemID, qty, unit, when)
+    for _, e in ipairs(MyFA_DB.ledger) do
+        if e.k == "buy" and e.id == itemID and e.q == qty and not e.x
+            and math.abs((e.u or 0) - unit) <= math.max(2, unit * 0.03)
+            and math.abs((e.t or 0) - when) < 4 * DAY then
+            return true
+        end
+    end
+    return false
+end
+
+function ns.RecordBuy(itemID, qty, unit, manual, opts)
     if not (itemID and qty and qty > 0 and unit) then return end
-    table.insert(MyFA_DB.ledger, { t = time(), k = "buy", id = itemID, q = qty, u = math.floor(unit), m = manual or nil })
+    opts = opts or {}
+    local when = opts.t or time()
+    if opts.src == "mail" and alreadyRecorded(itemID, qty, unit, when) then return end
+    table.insert(MyFA_DB.ledger, { t = when, k = "buy", id = itemID, q = qty, u = math.floor(unit), m = manual or nil,
+                                   c = ns.CharKey(), src = opts.src })
     MyFA_DB.alerted[itemID] = nil
     ns.FillItemMeta(itemID)
-    ns.Print(string.format("tracking %d %s bought at %s each. I'll alert you when it's worth selling.",
-        qty, ns.ItemName(itemID), ns.Money(unit)))
+    ns.Print(string.format("tracking %d %s bought at %s each%s. I'll alert you when it's worth selling.",
+        qty, ns.ItemName(itemID), ns.Money(unit), opts.src == "mail" and " (from your Auction House mail)" or ""))
+    MyFA_DB.lastBuyT = time()
     if ns.RefreshPanel then ns.RefreshPanel() end
 end
 
@@ -118,6 +135,56 @@ function ns.ImportFromDesk()
     end
 end
 
+-- backup capture: "Auction won" mails say what you bought, how many and what you paid,
+-- whichever window or addon you used to buy it
+local WON_DAYS = 30
+
+function ns.ReadPurchaseMail()
+    if not (GetInboxNumItems and GetInboxInvoiceInfo and MyFA_DB) then return end
+    MyFA_DB.mailSeen = MyFA_DB.mailSeen or {}
+    local now = time()
+    for i = 1, GetInboxNumItems() or 0 do
+        local ok, invoiceType, itemName, _, bid, _, _, _, _, _, _, count = pcall(GetInboxInvoiceInfo, i)
+        if ok and invoiceType == "buyer" and itemName and bid and bid > 0 then
+            local daysLeft = select(7, GetInboxHeaderInfo(i)) or WON_DAYS
+            local itemID, attached
+            for j = 1, (ATTACHMENTS_MAX_RECEIVE or 16) do
+                local name, id, _, n = GetInboxItem(i, j)
+                if id and (not itemName or name == itemName or not itemID) then itemID, attached = id, n end
+            end
+            if not itemID then
+                for id, meta in pairs(MyFA_DB.items) do
+                    if meta.n == itemName then itemID = id; break end
+                end
+            end
+            count = (count and count > 0) and count or attached or 1
+            -- the mail lasts 30 days, so this is when you bought it; stable across sessions for de-duplication
+            local bought = math.min(now, math.floor(now + daysLeft * DAY - WON_DAYS * DAY))
+            local key = string.format("%s|%d|%d|%d", itemName, bid, count, math.floor(bought / 900))
+            if itemID and not MyFA_DB.mailSeen[key] then
+                MyFA_DB.mailSeen[key] = now
+                ns.RecordBuy(itemID, count, bid / count, nil, { src = "mail", t = bought })
+            end
+        end
+    end
+    -- forget old keys
+    for key, t in pairs(MyFA_DB.mailSeen) do
+        if now - t > 40 * DAY then MyFA_DB.mailSeen[key] = nil end
+    end
+end
+
+-- purchases since a character last opened the mailbox are still on their way there
+local function inTransit(itemID, list)
+    local n = 0
+    for _, e in ipairs(list) do
+        if e.src ~= "mail" and not e.m then
+            local c = MyFA_DB.chars[e.c or ns.CharKey()]
+            if not c or (e.t or 0) > (c.mailT or 0) then n = n + e.q end
+        end
+    end
+    return n
+end
+
 -- positions: what you still hold from your purchases ---------------------------------
 
 local function cutRate()
@@ -146,7 +213,9 @@ function ns.Positions()
         local owned, parts = ns.Owned(itemID)
         local bought = 0
         for _, e in ipairs(list) do bought = bought + e.q end
-        local hold = math.min(owned, bought)
+        local transit = inTransit(itemID, list)
+        if transit > 0 then parts[#parts + 1] = { "on its way", "mail", transit } end
+        local hold = math.min(owned + transit, bought)
         if hold > 0 then
             -- you sell your oldest first, so what you still hold is your newest purchases
             table.sort(list, function(a, b) return a.t > b.t end)

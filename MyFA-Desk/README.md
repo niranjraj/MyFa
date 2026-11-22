@@ -50,7 +50,7 @@ Items with fewer than 10 listed (often recipes and patterns) are thin markets. T
 
 ## Flip tracking and sell alerts
 
-- **Automatic tracking:** every Auction House purchase is recorded, whether you buy through the MyFA panel, the Blizzard window or another addon. For something you bought before installing MyFA, shift-click it into `/myfa bought [item] qty price`, for example `/myfa bought [Golden Sansam] 20 14s50c`.
+- **Automatic tracking:** every Auction House purchase is recorded, whether you buy through the MyFA panel, the Blizzard window or another addon. As a backup, opening your mailbox reads your "Auction won" mails and records anything that was missed. Items still waiting in the mailbox show as "on its way, mail". For something you bought before installing MyFA, shift-click it into `/myfa bought [item] qty price`, for example `/myfa bought [Golden Sansam] 20 14s50c`.
 - **Alerts:** when the lowest listing clears your profit target, you get a raid-warning message, a sound and a chat line naming the character and bag, bank or mailbox that holds it. The default target is 15% after the cut; change it with `/myfa roi 20`. Checks run after every scan, when you open the Auction House and when you log in. Repeats come at most every 12 hours, or sooner if the price climbs another 10%.
 - **Desk:** prints the same alert and shows a Windows notification. Turn that off with `"desktop_notifications": false`.
 - **Raid items:** if the item is also a raid consumable, the alert says so, because launch week usually pays more and you may want to hold.

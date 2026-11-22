@@ -682,8 +682,18 @@ def analyse(sv, history: History, cfg, now=None):
         if e.get("k") == "buy" and not e.get("x") and e.get("t", 0) >= now - 90 * DAY and e.get("id") and e.get("q") and e.get("u"):
             buys_by.setdefault(int(e["id"]), []).append(e)
     positions = []
+    all_chars = db.get("chars") or {}
     for i, buys in buys_by.items():
-        hold = min(owned.get(i, 0), sum(e["q"] for e in buys))
+        # bought since that character last opened the mailbox: on its way, not yet seen in mail
+        transit = 0
+        for e in buys:
+            if e.get("src") != "mail" and not e.get("m"):
+                c = all_chars.get(e.get("c")) if e.get("c") else (chars[0] if chars else None)
+                if not c or e.get("t", 0) > (c.get("mailT") or 0):
+                    transit += e["q"]
+        if transit:
+            places.setdefault(i, []).append(("on its way", "mail", transit))
+        hold = min(owned.get(i, 0) + transit, sum(e["q"] for e in buys))
         if hold <= 0:
             continue
         buys.sort(key=lambda e: e["t"], reverse=True)  # oldest sold first, so you hold the newest
