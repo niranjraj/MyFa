@@ -19,6 +19,7 @@ local function targets()
 end
 
 local function list()
+    if currentTab == "mine" then return ns.Positions() end
     local t = targets()
     return (t and t[currentTab]) or {}
 end
@@ -122,9 +123,7 @@ local function onCommodityEvent(event, a1, a2)
         ns.Print("not enough " .. ns.ItemName(pending.id) .. " listed at that quantity. Lower the amount or Search.")
         cancelPending(true)
     elseif event == "COMMODITY_PURCHASE_SUCCEEDED" then
-        local p = pending
-        table.insert(MyFA_DB.ledger, { t = time(), k = "buy", id = p.id, q = p.qty, u = p.unit })
-        ns.Print(string.format("bought %d %s for %s.", p.qty, ns.ItemName(p.id), ns.Money(p.total or 0)))
+        -- Flips.lua records every Auction House purchase, including this one
         pending = nil
     elseif event == "COMMODITY_PURCHASE_FAILED" then
         ns.Print("purchase failed. Prices may have moved; try again.")
@@ -240,6 +239,21 @@ local function updateRow(r, e)
         r.detail:SetText(string.format("%s|r  %s%s|r", what, MUTED, e.loc or ("x" .. (e.qty or 0))))
         r.profit:SetText(ns.Money(e.value or 0))
         if e.action ~= "ah" then r.search:Hide() end
+    elseif currentTab == "mine" then
+        local state
+        if e.ready then
+            state = GREEN .. "SELL|r  " .. MUTED .. "now " .. "|r" .. ns.Money(e.now)
+        elseif e.now then
+            state = MUTED .. "hold, sell at " .. "|r" .. ns.Money(e.target)
+        else
+            state = MUTED .. "not listed in last scan|r"
+        end
+        r.detail:SetText(string.format("x%d  %spaid %s|r  %s", e.qty, MUTED, ns.Money(e.cost), state))
+        if e.pl then
+            r.profit:SetText((e.pl >= 0 and GREEN .. "+" or RED) .. ns.Money(e.pl) .. "|r")
+        else
+            r.profit:SetText("")
+        end
     else -- crafts
         r.detail:SetText(string.format("%scost %s|r  sells %s", MUTED, ns.Money(e.cost), ns.Money(e.value)))
         local p = e.profit or 0
@@ -274,14 +288,20 @@ function ns.RefreshPanel()
     offset = math.max(0, math.min(offset, #data - ROWS))
     for i = 1, ROWS do updateRow(rows[i], data[i + offset]) end
     for key, tab in pairs(tabs) do
-        local n = #((targets() or {})[key] or {})
+        local n = key == "mine" and #ns.Positions() or #((targets() or {})[key] or {})
         tab:SetText(tab.label .. " " .. n)
         if key == currentTab then tab:LockHighlight() else tab:UnlockHighlight() end
     end
     if #data == 0 then
         local t = targets()
-        panel.empty:SetText(t and "Nothing here in the latest targets." or
-            "No targets yet.\n\n1. Full scan here\n2. /reload so MyFA Desk can read it\n3. /reload again once Desk says targets are ready")
+        if currentTab == "mine" then
+            panel.empty:SetText("No tracked flips yet.\n\nAnything you buy on the Auction House is tracked automatically, "
+                .. "from any window or addon. You get an alert when it's worth selling.\n\n"
+                .. "For something you bought earlier:\n/myfa bought [item] qty price\ne.g. /myfa bought [Golden Sansam] 20 14s50c")
+        else
+            panel.empty:SetText(t and "Nothing here in the latest targets." or
+                "No targets yet.\n\n1. Full scan here\n2. /reload so MyFA Desk can read it\n3. /reload again once Desk says targets are ready")
+        end
         panel.empty:Show()
     else
         panel.empty:Hide()
@@ -302,8 +322,14 @@ local function build()
     panel:EnableMouse(true)
     panel:SetMovable(true)
     panel:RegisterForDrag("LeftButton")
+    panel:SetClampedToScreen(true)
     panel:SetScript("OnDragStart", panel.StartMoving)
-    panel:SetScript("OnDragStop", panel.StopMovingOrSizing)
+    panel:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local point, _, relPoint, x, y = self:GetPoint(1)
+        MyFA_DB.ui.pos = { point, relPoint, x, y }
+        MyFA_DB.ui.manual = true
+    end)
     panel:Hide()
     tinsert(UISpecialFrames, "MyFAPanel")
 
@@ -321,7 +347,7 @@ local function build()
     panel.scan:SetPoint("TOPRIGHT", -30, -14)
     panel.scan:SetScript("OnClick", function() ns.StartScan() end)
 
-    local tabDefs = { { "buys", "Buy" }, { "sells", "Items" }, { "crafts", "Craft" } }
+    local tabDefs = { { "buys", "Buy" }, { "sells", "Items" }, { "crafts", "Craft" }, { "mine", "Mine" } }
     local prev
     for _, def in ipairs(tabDefs) do
         local b = makeButton(panel, def[2], 92)
@@ -355,7 +381,8 @@ local function build()
     panel.footer:SetPoint("BOTTOMLEFT", 14, 12)
     panel.footer:SetWidth(PANEL_W - 28)
     panel.footer:SetJustifyH("LEFT")
-    panel.footer:SetText("Every purchase needs your click. Buy asks the server for the live price and only offers Confirm if it is at or under the max.")
+    panel.footer:SetText("Buy checks the live price and only offers Confirm at or under the max. Purchases are tracked in Mine; "
+        .. "you'll get an alert when one is worth selling. Drag to move, /myfa dock to snap back.")
 
     panel:SetScript("OnShow", function()
         panel.ticker = C_Timer.NewTicker(1, ns.RefreshHeader)
@@ -372,11 +399,84 @@ function ns.TogglePanel()
     panel:SetShown(not panel:IsShown())
 end
 
+-- docking: sit beside whichever Auction House window is open (Blizzard's or an addon's) -----
+
+local function rect(f)
+    local ok, l, r, t, b = pcall(function() return f:GetLeft(), f:GetRight(), f:GetTop(), f:GetBottom() end)
+    if not ok or not (l and r and t and b) then return nil end
+    local k = (f:GetEffectiveScale() or 1) / (UIParent:GetEffectiveScale() or 1)
+    return l * k, r * k, t * k, b * k
+end
+
+local function ahWindows()
+    local base = AuctionHouseFrame
+    local bl, br, bt, bb = nil, nil, nil, nil
+    if base and base:IsShown() then bl, br, bt, bb = rect(base) end
+    local found = {}
+    if bl then found[#found + 1] = { bl, br, bt, bb } end
+    local screenW = UIParent:GetWidth() or 1920
+    local ok, kids = pcall(function() return { UIParent:GetChildren() } end)
+    for _, kid in ipairs(ok and kids or {}) do
+        pcall(function()
+            if kid == panel or (kid.IsForbidden and kid:IsForbidden()) or not kid:IsVisible() then return end
+            local l, r, t, b = rect(kid)
+            if not l then return end
+            local w, h = r - l, t - b
+            if w < 280 or h < 280 or w > screenW * 0.85 then return end
+            if bl then
+                -- must overlap or touch the Blizzard window
+                if l > br + 40 or r < bl - 40 or b > bt or t < bb then return end
+            else
+                -- no Blizzard window: only frames that look like an auction window
+                local name = (kid.GetName and kid:GetName() or ""):lower()
+                if not (name:find("auction") or name:find("aux") or name:find("market") or name:find("broker")) then return end
+            end
+            found[#found + 1] = { l, r, t, b }
+        end)
+    end
+    return found
+end
+
+local function dock()
+    if not panel then return end
+    if MyFA_DB.ui.manual and MyFA_DB.ui.pos then
+        local p = MyFA_DB.ui.pos
+        panel:ClearAllPoints()
+        panel:SetPoint(p[1], UIParent, p[2], p[3], p[4])
+        return
+    end
+    local wins = ahWindows()
+    if #wins == 0 then return end
+    local left, right, top = math.huge, -math.huge, -math.huge
+    for _, w in ipairs(wins) do
+        left, right, top = math.min(left, w[1]), math.max(right, w[2]), math.max(top, w[3])
+    end
+    local scale = (panel:GetEffectiveScale() or 1) / (UIParent:GetEffectiveScale() or 1)
+    local width = PANEL_W * scale
+    local x = right + 6
+    if x + width > (UIParent:GetWidth() or 1920) then
+        x = left - 6 - width                       -- no room on the right: dock on the left
+        if x < 0 then x = (UIParent:GetWidth() or 1920) - width - 6 end
+    end
+    panel:ClearAllPoints()
+    panel:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / scale, top / scale)
+end
+
+function ns.Redock()
+    MyFA_DB.ui.manual, MyFA_DB.ui.pos = nil, nil
+    if not panel then build() end
+    dock()
+    panel:Show()
+    ns.Print("panel docked beside the Auction House. Drag it to move; it remembers where you put it.")
+end
+
 local function attachToAH()
     if not panel then build() end
-    panel:ClearAllPoints()
-    panel:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 6, 0)
+    dock()
     panel:Show()
+    -- other auction addons often open their window a moment later: dock again
+    C_Timer.After(0.2, dock)
+    C_Timer.After(0.8, dock)
 end
 
 -- events ---------------------------------------------------------------------
@@ -407,8 +507,18 @@ local function addTooltipLines(tt, id)
     local s = realm and realm.items and realm.items[id]
     local t = targets()
     local deskValue = t and t.prices and t.prices[id]
-    if not s and not deskValue then return end
+    local owned, parts = ns.Owned(id)
+    if not s and not deskValue and owned == 0 then return end
     tt:AddLine(" ")
+    if owned > 0 then
+        tt:AddDoubleLine("|cffd9b45aMyFA|r you own", owned .. MUTED .. "  " .. ns.WhereText(parts, 3) .. "|r", 1, 1, 1, 1, 1, 1)
+        for _, p in ipairs(ns.Positions()) do
+            if p.id == id then
+                tt:AddDoubleLine("|cffd9b45aMyFA|r you paid", ns.Money(p.cost) .. MUTED .. " each, sell at " .. "|r" .. ns.Money(p.target), 1, 1, 1, 1, 1, 1)
+                break
+            end
+        end
+    end
     if s then
         tt:AddDoubleLine("|cffd9b45aMyFA|r lowest", ns.Money(s.m) .. MUTED .. "  (" .. (s.q or 0) .. " listed)|r", 1, 1, 1, 1, 1, 1)
     end

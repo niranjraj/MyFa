@@ -84,6 +84,7 @@ local function finish(realmKey, byItem, auctions)
     setStatus(nil)
     ns.Print(string.format("scan done: %d auctions, %d items. Type /reload to hand it to MyFA Desk.", auctions, count))
     if ns.RefreshPanel then ns.RefreshPanel() end
+    if ns.CheckFlips then ns.CheckFlips() end
 end
 
 local function process()

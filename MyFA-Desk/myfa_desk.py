@@ -53,6 +53,7 @@ DEFAULTS = {
     "vendor_costs": {},          # {"3371": 4} item ID -> copper, for vendor mats MyFA hasn't seen yet
     "open_report": True,
     "claude_model": "claude-sonnet-5-5",
+    "desktop_notifications": True,  # Windows notification when a flip becomes worth selling
     "auto_update": "ask",        # "ask", "always" or "never": check GitHub for a new MyFA release at start
     "github_token": "",          # only needed if the MyFa repo is made private
 }
@@ -170,9 +171,14 @@ def brief(result):
         f"# MyFA scan: {result['realm']}",
         f"Scan {time.strftime('%Y-%m-%d %H:%M', time.localtime(result['scan_ts'] or 0))}, "
         f"{result['auctions']:,} auctions, {result['item_count']:,} items, {result['history_days']} days of history, "
-        f"gold on hand {fmt(result['money'])}. AH cut assumed {c['ah_cut'] * 100:g}%.",
-        "", "## Flip targets", "| Item | Avg buy | Qty | Relist | Profit | Risk | Days |", "|---|---|---|---|---|---|---|",
+        f"gold on hand {fmt(result['money'])} across {result['n_chars']} character(s). AH cut assumed {c['ah_cut'] * 100:g}%.",
     ]
+    if result["positions"]:
+        lines += ["", "## My flips (bought and still held)", "| Item | Qty | Paid | Lowest now | Status | P/L now | Where |",
+                  "|---|---|---|---|---|---|---|"]
+        lines += [f"| {r['name']} | {r['qty']} | {fmt(r['cost'])} | {fmt(r['now']) if r['now'] else 'not listed'} | "
+                  f"{r['status']} | {fmt(r['pl']) if r['pl'] is not None else 'n/a'} | {r['where']} |" for r in result["positions"]]
+    lines += ["", "## Flip targets", "| Item | Avg buy | Qty | Relist | Profit | Risk | Days |", "|---|---|---|---|---|---|---|"]
     lines += [f"| {r['name']} | {fmt(r['avg'])} | {r['qty']} | {fmt(r['sell'])} | {fmt(r['profit'])} | {r['risk']} | {r['days']} |"
               for r in result["flips"][:20]] or ["| none | | | | | | |"]
     lines += ["", "## Vendor flips"] + [f"- {r['name']}: {r['qty']} @ {fmt(r['avg'])}, profit {fmt(r['profit'])}"
@@ -206,6 +212,61 @@ def brief(result):
         + (f", {r['slope'] * 100:+.1f}%/day over {r['days']} days" if r["slope"] is not None else "")
         for r in result["trends"][:15]]
     return "\n".join(lines) + "\n"
+
+
+NOTIFIED_PATH = DATA_DIR / "notified.json"
+
+
+def notify(title, message):
+    """Windows tray notification; silently does nothing elsewhere or if PowerShell is unavailable."""
+    if os.name != "nt":
+        return
+    def q(x):
+        return x.replace("'", "''")
+    script = (
+        "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; "
+        "$n = New-Object System.Windows.Forms.NotifyIcon; $n.Icon = [System.Drawing.SystemIcons]::Information; "
+        f"$n.BalloonTipTitle = '{q(title)}'; $n.BalloonTipText = '{q(message)}'; $n.Visible = $true; "
+        "$n.ShowBalloonTip(10000); Start-Sleep -Seconds 11; $n.Dispose()"
+    )
+    try:
+        subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", script],
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except OSError:
+        pass
+
+
+def notify_ready(result, cfg):
+    """Tell you once per price level when a flip becomes worth selling."""
+    try:
+        seen = json.loads(NOTIFIED_PATH.read_text(encoding="utf-8")) if NOTIFIED_PATH.exists() else {}
+    except ValueError:
+        seen = {}
+    fresh, current = [], {}
+    for r in result["positions"]:
+        if r["status"] != "Sell now":
+            continue
+        key = f"{result['realm']}:{r['id']}"
+        prev = seen.get(key)
+        if prev is None or r["now"] >= prev * 1.1:
+            fresh.append(r)
+            current[key] = r["now"]
+        else:
+            current[key] = prev
+    NOTIFIED_PATH.parent.mkdir(parents=True, exist_ok=True)
+    NOTIFIED_PATH.write_text(json.dumps(current), encoding="utf-8")
+    for r in fresh:
+        print(f"  SELL {r['name']} x{r['qty']}: lowest {fmt(r['now'])}, you paid {fmt(r['cost'])}. "
+              f"+{fmt(r['pl'])} after the cut ({r['where']}).")
+    if fresh and cfg.get("desktop_notifications", True):
+        if len(fresh) == 1:
+            r = fresh[0]
+            notify("MyFA: time to sell", f"{r['name']} x{r['qty']} is up to {fmt(r['now'])}. "
+                                         f"Sell for +{fmt(r['pl'])} ({r['where']}).")
+        else:
+            total = sum(r["pl"] or 0 for r in fresh)
+            notify("MyFA: time to sell", f"{len(fresh)} flips are ready, +{fmt(total)} in total: "
+                                         + ", ".join(r["name"] for r in fresh[:4]))
 
 
 def ask_claude(text, cfg):
@@ -250,6 +311,7 @@ def process(sv_path: Path, targets_path: Path, cfg, history, args, first=False):
         return False
     write_targets(result, targets_path)
     BRIEF_PATH.write_text(brief(result), encoding="utf-8")
+    notify_ready(result, cfg)
 
     advice = None
     if args.ask_claude:
@@ -263,7 +325,9 @@ def process(sv_path: Path, targets_path: Path, cfg, history, args, first=False):
     stamp = time.strftime("%H:%M:%S")
     print(f"[{stamp}] {result['realm']}: {len(result['flips'])} flips, {len(result['vendor'])} vendor flips, "
           f"{sum(1 for r in result['crafts'] if r['profit'] and r['profit'] > 0)} profitable crafts, "
-          f"{len(result['inventory'])} owned items{'' if result['bank_seen'] else ' (bank not seen yet: visit a banker)'}. "
+          f"{len(result['inventory'])} owned items on {result['n_chars']} character(s)"
+          f"{'' if result['bank_seen'] else ' (bank not seen yet: visit a banker)'}, "
+          f"{sum(1 for r in result['positions'] if r['status'] == 'Sell now')} flips ready to sell. "
           f"Targets ready. Type /reload in game.")
     if first and cfg.get("open_report") and not args.no_open:
         webbrowser.open(REPORT_PATH.as_uri())

@@ -29,6 +29,23 @@ Nothing is automated. Every purchase is your click, and WoW itself requires that
 
 `/myfa` toggles the panel, `/myfa scan` scans, and `/myfa status` shows data age.
 
+## Flip tracking and sell alerts
+
+- **Automatic tracking:** every Auction House purchase is recorded, whether you buy through the MyFA panel, the Blizzard window or another addon. For something you bought before installing MyFA, shift-click it into `/myfa bought [item] qty price`, for example `/myfa bought [Golden Sansam] 20 14s50c`.
+- **Alerts:** when the lowest listing clears your profit target, you get a raid-warning message, a sound and a chat line naming the character and bag, bank or mailbox that holds it. The default target is 15% after the cut; change it with `/myfa roi 20`. Checks run after every scan, when you open the Auction House and when you log in. Repeats come at most every 12 hours, or sooner if the price climbs another 10%.
+- **Desk:** prints the same alert and shows a Windows notification. Turn that off with `"desktop_notifications": false`.
+- **Raid items:** if the item is also a raid consumable, the alert says so, because launch week usually pays more and you may want to hold.
+- **Where to see them:** the **Mine** tab in game and **My flips** in Desk list what you paid, the price now, the alert price, the profit now and a note.
+- **Stop tracking** an item with `/myfa forget [item]`. Turn alerts off with `/myfa alerts off`.
+
+## Multiple characters
+
+Log in once on each character with MyFA enabled and open its bank and mailbox once. MyFA combines bags, bank and mailbox across every character on the same Auction House (same ruleset and faction). The panel, tooltips and Desk all show where each item is, for example *Mooreth bank 9, Zelrin bags 5*. Gold is totalled across characters too. Auction House purchases land in the mailbox first, so they count before you collect them.
+
+## Panel position
+
+The panel docks to the right of whichever Auction House window is open, including other addons' windows. If there's no room on the right, it docks on the left. Drag it anywhere and it stays there; `/myfa dock` snaps it back. `/myfa help` lists every command.
+
 ## Reading the results
 
 - **Analysis** (opens first) is your overview:

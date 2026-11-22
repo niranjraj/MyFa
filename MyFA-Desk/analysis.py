@@ -208,8 +208,9 @@ def analyse(sv, history: History, cfg, now=None):
             options.append(vendor_buy[i])
         return min(options) if options else None
 
-    chars = [c for c in (db.get("chars") or {}).values() if c.get("realmKey") == realm_key]
-    money = max((c.get("money") or 0 for c in chars), default=0)
+    char_items = [(k, c) for k, c in (db.get("chars") or {}).items() if c.get("realmKey") == realm_key]
+    chars = [c for _, c in char_items]
+    money = sum((c.get("money") or 0) for c in chars)
     budget = money * float(cfg["max_spend_fraction"]) if money else float("inf")
 
     # ---- flips ---------------------------------------------------------------
@@ -279,22 +280,29 @@ def analyse(sv, history: History, cfg, now=None):
     vendor.sort(key=lambda r: r["profit"], reverse=True)
 
     # ---- what you own (bags + bank + warband bank) -------------------------------
-    stock = {}
+    stock, places = {}, {}
 
-    def add_stock(i, n, where):
-        e = stock.setdefault(int(i), {"bags": 0, "bank": 0, "warband": 0})
+    def add_stock(i, n, where, who):
+        i = int(i)
+        e = stock.setdefault(i, {"bags": 0, "bank": 0, "mail": 0, "warband": 0})
         e[where] += int(n)
+        places.setdefault(i, []).append((who, "bank" if where == "warband" else where, int(n)))
 
-    for c in chars:
-        for i, n in (c.get("bags") or {}).items():
-            add_stock(i, n, "bags")
-        for i, n in (c.get("bank") or {}).items():
-            add_stock(i, n, "bank")
+    for key, c in char_items:
+        who = key.split("-")[0]
+        for where in ("bags", "bank", "mail"):
+            for i, n in (c.get(where) or {}).items():
+                add_stock(i, n, where, who)
     wb = db.get("warband") or {}
-    if wb.get("items"):
+    if wb.get("items") and wb.get("realmKey", realm_key) == realm_key:
         for i, n in wb["items"].items():
-            add_stock(i, n, "warband")
-    owned = {i: e["bags"] + e["bank"] + e["warband"] for i, e in stock.items()}
+            add_stock(i, n, "warband", "Warband")
+    owned = {i: sum(e.values()) for i, e in stock.items()}
+
+    def where_text(i, limit=4):
+        parts = places.get(i, [])
+        txt = ", ".join(f"{who} {where} {n}" for who, where, n in parts[:limit])
+        return txt + (f", +{len(parts) - limit} more" if len(parts) > limit else "")
 
     def raw_value(i):
         """Per-unit value of selling an item as it is: max of AH (after cut) and vendor."""
@@ -441,7 +449,7 @@ def analyse(sv, history: History, cfg, now=None):
             notes.append(f"Price {'rising' if t['slope'] > 0 else 'falling'} about {abs(t['slope']) * 100:.0f}% a day.")
         if action == "craft":
             notes.append(f"Worth {fmt(best)} each crafted into {craft[1]} vs {fmt(max(ah, v))} sold as is.")
-        loc = ", ".join(f"{where} {e[where]}" for where in ("bags", "bank", "warband") if e[where])
+        loc = where_text(i)
         inventory.append({
             "id": i, "name": name(i), "q": quality(i), "qty": n, "bags": e["bags"], "bank": e["bank"],
             "warband": e["warband"], "loc": loc, "action": action, "price": price or 0,
@@ -636,6 +644,61 @@ def analyse(sv, history: History, cfg, now=None):
                 })
 
     ledger = [e for e in (db.get("ledger") or []) if isinstance(e, dict)]
+
+    # ---- my flips: what you bought and still hold, on every character ------------------
+    roi = float((db.get("settings") or {}).get("roi") or cfg.get("flip_roi", 0.15))
+    buys_by = {}
+    for e in ledger:
+        if e.get("k") == "buy" and not e.get("x") and e.get("t", 0) >= now - 90 * DAY and e.get("id") and e.get("q") and e.get("u"):
+            buys_by.setdefault(int(e["id"]), []).append(e)
+    positions = []
+    for i, buys in buys_by.items():
+        hold = min(owned.get(i, 0), sum(e["q"] for e in buys))
+        if hold <= 0:
+            continue
+        buys.sort(key=lambda e: e["t"], reverse=True)  # oldest sold first, so you hold the newest
+        need, spent = hold, 0
+        for e in buys:
+            take = min(need, e["q"])
+            spent += take * e["u"]
+            need -= take
+            if need <= 0:
+                break
+        cost = spent / hold
+        s_ = scan.get(i)
+        now_p = s_["m"] if s_ else None
+        target = math.ceil(cost * (1 + roi) / (1 - cut))
+        mk = market(i)
+        b = band(i)
+        suggest = max(target, b["sell"] if b else 0, mk or 0)
+        pl = int((now_p * (1 - cut) - cost) * hold) if now_p else None
+        if now_p is None:
+            status = "Not listed"
+        elif now_p >= target:
+            status = "Sell now"
+        elif now_p * (1 - cut) >= cost:
+            status = "Hold"
+        else:
+            status = "Under water"
+        t = trends.get(i)
+        note = ""
+        raid = raid_by_id.get(i)
+        if raid and phase(raid["day"] - today)[0] in ("stock", "build"):
+            note = (f"Raid consumable: launch week ({_date(raid['day'])}) usually pays more. "
+                    f"Sell now to lock in the profit, or hold for the raids.")
+        elif t and t["slope"] is not None and t["slope"] <= -0.03 and status in ("Hold", "Under water"):
+            note = "Falling about %d%% a day. Consider selling at market before it drops further." % round(-t["slope"] * 100)
+        elif t and t["slope"] is not None and t["slope"] >= 0.04 and status == "Sell now":
+            note = "Still rising about %d%% a day; selling part now and part later spreads the risk." % round(t["slope"] * 100)
+        positions.append({
+            "id": i, "name": name(i), "q": quality(i), "qty": hold, "cost": int(cost), "now": now_p, "market": mk,
+            "target": target, "suggest": int(suggest), "pl": pl, "status": status, "where": where_text(i),
+            "since": buys[-1]["t"], "trend": t["slope"] if t else None, "invested": int(cost * hold),
+            "ready_value": int((target * (1 - cut) - cost) * hold), "note": note,
+        })
+    order = {"Sell now": 0, "Hold": 1, "Under water": 2, "Not listed": 3}
+    positions.sort(key=lambda r: (order[r["status"]], -(r["pl"] or -10**12)))
+
     spent_7d = sum((e.get("q", 0) * e.get("u", 0)) for e in ledger if e.get("t", 0) >= now - 7 * DAY)
 
     prices = {i: market(i) for i in scan if market(i)}
@@ -650,6 +713,8 @@ def analyse(sv, history: History, cfg, now=None):
         "trends": trend_rows, "chart": chart, "chart_focus": focus[0] if focus else None,
         "ledger": ledger[-40:], "spent_7d": spent_7d, "prices": prices, "cfg": cfg,
         "bands": bands, "index": index, "weekday": weekday, "raid_plan": raid_plan, "raids": raids_out,
+        "positions": positions, "roi": roi, "n_chars": len(chars),
+        "mail_seen": any(c.get("mailT") for c in chars),
     }
 
 
@@ -693,4 +758,5 @@ def targets_table(result):
     return {
         "generated": result["now"], "realm": result["realm"], "scan": result["scan_ts"],
         "cut": result["cfg"]["ah_cut"], "buys": buys, "sells": sells, "crafts": crafts, "prices": result["prices"],
+        "flips": {r["id"]: {"note": r["note"]} for r in result["positions"] if r["note"]},
     }

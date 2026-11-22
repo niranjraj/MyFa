@@ -1,6 +1,6 @@
 -- MyFA Core: saved data, character snapshot (bags, gold, recipes, vendor prices), slash commands.
 local ADDON, ns = ...
-ns.VERSION = "1.0.0"
+ns.VERSION = "1.1.0"
 ns.HISTORY_DAYS = 14
 
 local DB_DEFAULTS = {
@@ -9,7 +9,10 @@ local DB_DEFAULTS = {
     items = {},     -- [itemID] = { n = name, v = vendorSell, c = quality, e = equipLoc, s = maxStack }
     chars = {},     -- [charKey] = { realmKey, faction, money, t, bags = {[itemID] = count}, recipes = {...} }
     vendorBuy = {}, -- [itemID] = copper per unit when bought from a merchant
-    ledger = {},    -- { t, k = "buy", id, q, u }
+    ledger = {},    -- { t, k = "buy", id, q, u, m = manual, x = forgotten }
+    alerted = {},   -- [itemID] = { p = price alerted at, t = time }
+    settings = { roi = 0.15, alerts = true },
+    ui = {},        -- panel position
 }
 
 local function copyDefaults(dst, src)
@@ -170,6 +173,83 @@ function ns.SnapshotBank()
     end
 end
 
+-- Mailbox: Auction House purchases land here first -----------------------------
+
+function ns.SnapshotMail()
+    if not GetInboxNumItems or not GetInboxItem then return end
+    local c = ns.Char()
+    local mail = {}
+    for i = 1, GetInboxNumItems() or 0 do
+        for j = 1, (ATTACHMENTS_MAX_RECEIVE or 16) do
+            local _, itemID, _, count = GetInboxItem(i, j)
+            if itemID then
+                mail[itemID] = (mail[itemID] or 0) + (count or 1)
+                ns.FillItemMeta(itemID)
+            end
+        end
+    end
+    c.mail = mail
+    c.mailT = time()
+end
+
+-- Everything you own, across every character on this Auction House --------------
+
+local function shortName(charKey)
+    return (charKey:match("^([^-]+)")) or charKey
+end
+
+-- returns total, { {who, where, n}, ... } for one item across all characters on this realm/faction
+function ns.Owned(itemID)
+    local realmKey = ns.RealmKey()
+    local total, parts = 0, {}
+    for key, c in pairs(MyFA_DB.chars) do
+        if c.realmKey == realmKey then
+            for _, where in ipairs({ "bags", "bank", "mail" }) do
+                local n = c[where] and c[where][itemID]
+                if n and n > 0 then
+                    total = total + n
+                    parts[#parts + 1] = { shortName(key), where, n }
+                end
+            end
+        end
+    end
+    local wb = MyFA_DB.warband
+    if wb and wb.realmKey == realmKey and wb.items and wb.items[itemID] then
+        total = total + wb.items[itemID]
+        parts[#parts + 1] = { "Warband", "bank", wb.items[itemID] }
+    end
+    return total, parts
+end
+
+function ns.WhereText(parts, limit)
+    local out = {}
+    for i, p in ipairs(parts) do
+        if limit and i > limit then out[#out + 1] = "+" .. (#parts - limit) .. " more"; break end
+        out[#out + 1] = string.format("%s %s %d", p[1], p[2], p[3])
+    end
+    return table.concat(out, ", ")
+end
+
+function ns.AllGold()
+    local realmKey, sum = ns.RealmKey(), 0
+    for _, c in pairs(MyFA_DB.chars) do
+        if c.realmKey == realmKey then sum = sum + (c.money or 0) end
+    end
+    return sum
+end
+
+-- "1g20s50c", "20s", "1450" -> copper
+function ns.ParseMoney(text)
+    if not text or text == "" then return nil end
+    text = text:lower():gsub("%s+", "")
+    if text:match("^%d+$") then return tonumber(text) end
+    local g = tonumber(text:match("(%d+)g")) or 0
+    local s = tonumber(text:match("(%d+)s")) or 0
+    local c = tonumber(text:match("(%d+)c")) or 0
+    local total = g * 10000 + s * 100 + c
+    return total > 0 and total or nil
+end
+
 -- Recipes (modern profession API; silently skipped if the client lacks it) ---
 
 function ns.SnapshotRecipes()
@@ -257,12 +337,17 @@ f:RegisterEvent("ITEM_DATA_LOAD_RESULT")
 f:RegisterEvent("BANKFRAME_OPENED")
 f:RegisterEvent("BANKFRAME_CLOSED")
 pcall(f.RegisterEvent, f, "PLAYERBANKSLOTS_CHANGED")
+f:RegisterEvent("MAIL_SHOW")
+f:RegisterEvent("MAIL_INBOX_UPDATE")
+f:RegisterEvent("MAIL_CLOSED")
 
 f:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "ADDON_LOADED" and arg1 == ADDON then
         MyFA_DB = MyFA_DB or {}
         copyDefaults(MyFA_DB, DB_DEFAULTS)
         MyFA_DB.addonVersion = ns.VERSION
+        MyFA_DB.settings.roi = MyFA_DB.settings.roi or 0.15
+        if MyFA_DB.settings.alerts == nil then MyFA_DB.settings.alerts = true end
     elseif event == "PLAYER_LOGIN" then
         ns.SnapshotBags()
         if ns.OnLogin then ns.OnLogin() end
@@ -279,6 +364,8 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
     elseif event == "BANKFRAME_CLOSED" then
         ns.SnapshotBank()
         bankOpen = false
+    elseif event == "MAIL_SHOW" or event == "MAIL_INBOX_UPDATE" or event == "MAIL_CLOSED" then
+        ns.SnapshotMail()
     elseif event == "TRADE_SKILL_LIST_UPDATE" then
         ns.SnapshotRecipes()
     elseif event == "MERCHANT_SHOW" then
@@ -292,11 +379,24 @@ end)
 
 SLASH_MYFA1 = "/myfa"
 SLASH_MYFA2 = "/mfa"
+local HELP = {
+    "/myfa - show or hide the panel",
+    "/myfa scan - full Auction House scan (once every 15 min)",
+    "/myfa status - data and targets age",
+    "/myfa bought [item] qty price - track something you bought earlier, e.g. /myfa bought [Golden Sansam] 20 14s50c",
+    "/myfa forget [item] - stop tracking an item's flip",
+    "/myfa roi 20 - alert when a flip is worth 20%% profit after the cut (now %d%%)",
+    "/myfa alerts on|off - sell alerts",
+    "/myfa dock - snap the panel back beside the Auction House",
+}
+
 SlashCmdList.MYFA = function(msg)
-    msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
-    if msg == "scan" then
+    msg = (msg or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    local cmd, rest = msg:match("^(%S*)%s*(.-)$")
+    cmd = (cmd or ""):lower()
+    if cmd == "scan" then
         ns.StartScan()
-    elseif msg == "status" then
+    elseif cmd == "status" then
         local r = MyFA_DB.realms[ns.RealmKey()]
         if r and r.lastScan then
             ns.Print(string.format("%s: last full scan %d min ago, %d auctions, %d items.",
@@ -310,6 +410,46 @@ SlashCmdList.MYFA = function(msg)
                 math.floor((time() - t.generated) / 60), #(t.buys or {}), #(t.sells or {}), #(t.crafts or {})))
         else
             ns.Print("no targets loaded yet. Run MyFA Desk, then /reload.")
+        end
+        local n = ns.Positions and #ns.Positions() or 0
+        ns.Print(string.format("tracking %d flips; alerts %s at %d%% profit.", n,
+            MyFA_DB.settings.alerts and "on" or "off", math.floor(MyFA_DB.settings.roi * 100 + 0.5)))
+    elseif cmd == "bought" or cmd == "forget" then
+        local itemID = tonumber(rest:match("item:(%d+)")) or tonumber(rest:match("^(%d+)"))
+        local after = rest:gsub("|c%x+|H.-|h.-|h|r", ""):gsub("^%d+", "")
+        if not itemID then
+            ns.Print("shift-click the item into the command, e.g. /myfa " .. cmd .. " [Golden Sansam]" .. (cmd == "bought" and " 20 14s50c" or ""))
+            return
+        end
+        ns.FillItemMeta(itemID)
+        if cmd == "forget" then
+            ns.ForgetFlip(itemID)
+            return
+        end
+        local qty, price = after:match("^%s*(%d+)%s+(%S+)")
+        price = ns.ParseMoney(price)
+        if not qty or not price then
+            ns.Print("usage: /myfa bought [item] qty price-each, e.g. /myfa bought [Golden Sansam] 20 14s50c")
+            return
+        end
+        ns.RecordBuy(itemID, tonumber(qty), price, true)
+    elseif cmd == "roi" then
+        local v = tonumber(rest)
+        if v and v > 0 then
+            MyFA_DB.settings.roi = v / 100
+            ns.Print(string.format("sell alerts now fire at %d%% profit after the cut.", v))
+            if ns.CheckFlips then ns.CheckFlips() end
+        else
+            ns.Print("usage: /myfa roi 20")
+        end
+    elseif cmd == "alerts" then
+        MyFA_DB.settings.alerts = rest:lower() ~= "off"
+        ns.Print("sell alerts " .. (MyFA_DB.settings.alerts and "on." or "off."))
+    elseif cmd == "dock" then
+        if ns.Redock then ns.Redock() end
+    elseif cmd == "help" or cmd == "?" then
+        for i, line in ipairs(HELP) do
+            ns.Print(i == 6 and string.format(line, math.floor(MyFA_DB.settings.roi * 100 + 0.5)) or line)
         end
     else
         if ns.TogglePanel then ns.TogglePanel() end

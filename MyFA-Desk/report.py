@@ -97,6 +97,22 @@ def analysis_panel(result, it, sort_or):
     cut_pct = f'{cfg["ah_cut"] * 100:g}%'
     parts = []
 
+    ready = [r for r in result["positions"] if r["status"] == "Sell now"]
+    if ready:
+        total = sum(r["pl"] or 0 for r in ready)
+        items = "".join(
+            f'<li>{it(r)} <span class="sub">x{r["qty"]} · {esc(r["where"])}</span>'
+            f'<span class="num pos">{money(r["pl"], True)}</span></li>' for r in ready[:6])
+        parts.append(f"""
+<section class="block ready" aria-labelledby="h-ready">
+  <div class="blockhead">
+    <h2 id="h-ready">Ready to sell</h2>
+    <p class="lede">{len(ready)} of your flips cleared your profit target. Selling them all at today's lowest price
+      makes <strong>{money(total, True)}</strong> after the cut. Fetch them from the bank or mailbox where noted.</p>
+  </div>
+  <ul class="readylist">{items}</ul>
+</section>""")
+
     # raid prep
     raids = result["raids"]
     if raids:
@@ -331,6 +347,23 @@ def build(result, advice=None, config_path=""):
         td(f'{r["owned"]:,}' if r["owned"] else "", r["owned"], "num"),
     ] for r in result["trends"]]
 
+    STATUS = {"Sell now": "act-c", "Hold": "act-h", "Under water": "risk-high", "Not listed": "act-v"}
+    pos_rows = [[
+        td(it(r), r["name"]),
+        td(f'<span class="{STATUS[r["status"]]}">{esc(r["status"])}</span>', ["Sell now", "Hold", "Under water", "Not listed"].index(r["status"]), "nowrap"),
+        td(f'{r["qty"]:,}', r["qty"], "num"),
+        td(esc(r["where"]), r["where"]),
+        td(money(r["cost"]), r["cost"], "num"),
+        td(money(r["now"]) if r["now"] else '<span class="na">none</span>', sort_or(r["now"]), "num"),
+        td(money(r["target"]), r["target"], "num"),
+        td(money(r["suggest"]), r["suggest"], "num strong"),
+        td(money(r["pl"], True) if r["pl"] is not None else '<span class="na">n/a</span>', sort_or(r["pl"], -10**12),
+           "num " + ("pos" if (r["pl"] or 0) > 0 else "neg" if (r["pl"] or 0) < 0 else "")),
+        td(pct(r["trend"], True), sort_or(r["trend"]), "num"),
+        td(time.strftime("%d %b", time.localtime(r["since"])), r["since"]),
+        td(esc(r["note"]), None, "why"),
+    ] for r in result["positions"]]
+
     names = {}
     for group in ("flips", "vendor", "inventory", "trends"):
         for r in result[group]:
@@ -362,6 +395,19 @@ def build(result, advice=None, config_path=""):
         raid_note = f" Next raids open {esc(r0['date'])} ({r0['days_left']} days)."
     panels.append(("analysis", "Analysis", None, analysis_panel(result, it, sort_or),
                    "Your overview: raid timing, how the market is moving, the price bands to flip in, and how to flip." + raid_note))
+    ready = [r for r in result["positions"] if r["status"] == "Sell now"]
+    roi_pct = int(round(result["roi"] * 100))
+    panels.append(("mine", "My flips", len(result["positions"]), table("mine", [
+        ("Item", "s", ""), ("Status", "n", ""), ("Qty", "n", "num"), ("Where", "s", ""), ("You paid", "n", "num"),
+        ("Lowest now", "n", "num"), ("Alert at", "n", "num"), ("Aim to sell at", "n", "num"), ("Profit now", "n", "num"),
+        ("Trend", "n", "num"), ("Bought", "n", ""), ("Note", "s", "why")], pos_rows,
+        "Nothing tracked yet. Every Auction House purchase is tracked automatically, from any window or addon. "
+        "For something you bought earlier, type <code>/myfa bought [item] qty price</code> in game, for example "
+        "<code>/myfa bought [Golden Sansam] 20 14s50c</code>."),
+        f"Items you bought and still hold on any character, bags, bank or mailbox. <em>Alert at</em> is the lowest listing "
+        f"that clears {roi_pct}% profit after the {cut_pct} cut. MyFA alerts you in game and here when it's reached. "
+        f"<em>Aim to sell at</em> is the higher of that, the market value and the item's usual high. "
+        f"Change the {roi_pct}% in game with <code>/myfa roi 20</code>."))
     panels += [
         ("flips", "Flips", len(result["flips"]), table("flips", [
             ("Item", "s", ""), ("Avg buy", "n", "num"), ("Buy up to", "n", "num"), ("Qty", "n", "num"),
@@ -378,15 +424,16 @@ def build(result, advice=None, config_path=""):
             ("Profit", "n", "num"), ("ROI", "n", "num")], vendor_rows,
             "Nothing is listed below its vendor price. These show up most when people dump cloth and herbs late at night."),
          "Listed below what a vendor pays. Buy them all and sell them to any merchant. No risk."),
-        ("inventory", "Bags & bank", len(result["inventory"]), table("inventory", [
+        ("inventory", "All characters", len(result["inventory"]), table("inventory", [
             ("Item", "s", ""), ("Qty", "n", "num"), ("Where", "s", ""), ("Best use", "s", ""), ("Post at", "n", "num"),
             ("AH net", "n", "num"), ("Vendor", "n", "num"), ("Crafted", "n", "num"), ("Best value", "n", "num"),
             ("Gain vs next", "n", "num"), ("Trend", "n", "num"), ("Note", "s", "why")], inv_rows,
             "Nothing recorded yet. Log in with MyFA enabled, visit a banker once, then /reload."),
-         f"Everything you own on this realm, bags and bank combined, worth {money(inv_value)} at its best use. "
+         f"Everything you own on this Auction House across {result['n_chars']} character{'s' if result['n_chars'] != 1 else ''} "
+         f"(bags, bank and mailbox), worth {money(inv_value)} at its best use. "
          f"<em>Crafted</em> is what each unit is worth turned into your best recipe that uses it, buying any other mats it needs"
          f"{', adding ' + money(inv_gain) + ' over selling as is' if inv_gain else ''}. "
-         + ("" if result["bank_seen"] else "<strong>Bank not seen yet: open your bank once.</strong>")),
+         + ("" if result["bank_seen"] else "<strong>Bank not seen yet: open your bank once on each character.</strong>")),
         ("crafts", "Crafts", len(result["crafts"]), table("crafts", [
             ("Recipe", "s", ""), ("Profession", "s", ""), ("Mat cost", "n", "num"), ("Sells for", "n", "num"),
             ("Profit", "n", "num"), ("Margin", "n", "num"), ("Make from stock", "n", "num"),
@@ -432,7 +479,7 @@ def build(result, advice=None, config_path=""):
         ("Items", f'{result["item_count"]:,}'),
         ("History", f'{result["history_days"]} days'),
         ("Owned value", money(inv_value) if inv_value else "n/a"),
-        ("Gold", money(result["money"]) if result["money"] else "n/a"),
+        ("Gold" if result["n_chars"] <= 1 else f"Gold, {result['n_chars']} chars", money(result["money"]) if result["money"] else "n/a"),
     ]
     facts_html = "".join(f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in facts)
 
@@ -594,6 +641,11 @@ em {{ font-style: normal; color: var(--text); }}
 span.pos {{ color: var(--pos); }} span.neg {{ color: var(--neg); }}
 
 .block {{ margin: 8px 0 36px; }}
+.block.ready {{ border: 1px solid rgba(114, 211, 142, .35); background: rgba(114, 211, 142, .05); border-radius: 8px;
+  padding: 16px 18px 10px; }}
+.readylist {{ list-style: none; margin: 0; padding: 0; max-width: 760px; }}
+.readylist li {{ display: flex; align-items: baseline; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line-soft); }}
+.readylist li .num {{ margin-left: auto; font-family: var(--mono); font-variant-numeric: tabular-nums; }}
 .blockhead {{ margin-bottom: 14px; }}
 .block h2 {{ margin: 0 0 6px; font-size: 17px; font-weight: 600; letter-spacing: -0.005em; }}
 .block h3 {{ margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); }}
