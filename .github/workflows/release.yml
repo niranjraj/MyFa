@@ -1,0 +1,45 @@
+name: Release
+
+# Push a tag like v1.2.0 and this builds the zips and publishes a GitHub Release.
+# MyFA Desk checks the latest release on start and updates itself and the addon.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stamp version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          sed -i "s/^## Version: .*/## Version: $VERSION/" MyFA/MyFA.toc
+          echo "$VERSION" > MyFA-Desk/VERSION
+
+      - name: Check Lua and Python
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.1 > /dev/null
+          for f in MyFA/*.lua MyFA/Data/*.lua; do luac5.1 -p "$f"; done
+          python3 -m py_compile MyFA-Desk/*.py
+          python3 -c "import json; json.load(open('MyFA-Desk/raids.json'))"
+
+      - name: Build zips
+        run: |
+          mkdir dist
+          zip -rq "dist/MyFA-${GITHUB_REF_NAME}.zip" MyFA
+          zip -rq "dist/MyFA-Desk-${GITHUB_REF_NAME}.zip" MyFA-Desk -x '*__pycache__*'
+          zip -rq "dist/MyFA-Kit-${GITHUB_REF_NAME}.zip" MyFA MyFA-Desk -x '*__pycache__*'
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES=$(awk -v v="## $VERSION" '$0==v{f=1;next} /^## /{f=0} f' CHANGELOG.md)
+          [ -z "$NOTES" ] && NOTES="MyFA $GITHUB_REF_NAME"
+          gh release create "$GITHUB_REF_NAME" dist/*.zip --title "MyFA $GITHUB_REF_NAME" --notes "$NOTES"

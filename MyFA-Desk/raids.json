@@ -1,0 +1,371 @@
+{
+  "_note": "Edit freely. Dates are YYYY-MM-DD (unlock hour not announced). Items match by exact in-game name. 'raids' lists which raids an item is for; use \"all\" for every upcoming raid.",
+  "raids": [
+    {
+      "name": "Barrow Deeps",
+      "date": "2026-12-09",
+      "size": 10
+    },
+    {
+      "name": "Hyjal Summit",
+      "date": "2026-12-09",
+      "size": 20
+    },
+    {
+      "name": "Onyxia's Lair",
+      "date": "2026-12-09",
+      "size": 40
+    }
+  ],
+  "items": [
+    {
+      "name": "Flask of Natural Accuracy",
+      "raids": [
+        "Barrow Deeps",
+        "Hyjal Summit"
+      ],
+      "role": "Flask: hit"
+    },
+    {
+      "name": "Flask of Natural Aggression",
+      "raids": [
+        "Barrow Deeps",
+        "Hyjal Summit"
+      ],
+      "role": "Flask: crit"
+    },
+    {
+      "name": "Flask of Natural Precision",
+      "raids": [
+        "Barrow Deeps",
+        "Hyjal Summit"
+      ],
+      "role": "Flask: expertise"
+    },
+    {
+      "name": "Flask of Natural Swiftness",
+      "raids": [
+        "Barrow Deeps",
+        "Hyjal Summit"
+      ],
+      "role": "Flask: haste"
+    },
+    {
+      "name": "Flask of the Titans",
+      "raids": [
+        "all"
+      ],
+      "role": "Flask: tanks"
+    },
+    {
+      "name": "Flask of Distilled Wisdom",
+      "raids": [
+        "all"
+      ],
+      "role": "Flask: healers"
+    },
+    {
+      "name": "Flask of Supreme Power",
+      "raids": [
+        "all"
+      ],
+      "role": "Flask: casters"
+    },
+    {
+      "name": "Flask of Chromatic Resistance",
+      "raids": [
+        "all"
+      ],
+      "role": "Flask: resistance"
+    },
+    {
+      "name": "Greater Fire Protection Potion",
+      "raids": [
+        "Onyxia's Lair"
+      ],
+      "role": "Onyxia phase 2"
+    },
+    {
+      "name": "Fire Protection Potion",
+      "raids": [
+        "Onyxia's Lair"
+      ],
+      "role": "Onyxia budget"
+    },
+    {
+      "name": "Elixir of the Mongoose",
+      "raids": [
+        "all"
+      ],
+      "role": "Elixir: agility"
+    },
+    {
+      "name": "Elixir of Giants",
+      "raids": [
+        "all"
+      ],
+      "role": "Elixir: strength"
+    },
+    {
+      "name": "Greater Arcane Elixir",
+      "raids": [
+        "all"
+      ],
+      "role": "Elixir: spell power"
+    },
+    {
+      "name": "Elixir of Shadow Power",
+      "raids": [
+        "all"
+      ],
+      "role": "Elixir: shadow"
+    },
+    {
+      "name": "Elixir of Greater Firepower",
+      "raids": [
+        "all"
+      ],
+      "role": "Elixir: fire"
+    },
+    {
+      "name": "Elixir of Frost Power",
+      "raids": [
+        "all"
+      ],
+      "role": "Elixir: frost"
+    },
+    {
+      "name": "Elixir of the Sages",
+      "raids": [
+        "all"
+      ],
+      "role": "Elixir: int/spirit"
+    },
+    {
+      "name": "Elixir of Fortitude",
+      "raids": [
+        "all"
+      ],
+      "role": "Elixir: health"
+    },
+    {
+      "name": "Elixir of Superior Defense",
+      "raids": [
+        "all"
+      ],
+      "role": "Elixir: armor"
+    },
+    {
+      "name": "Mageblood Potion",
+      "raids": [
+        "all"
+      ],
+      "role": "Healer mana regen"
+    },
+    {
+      "name": "Major Mana Potion",
+      "raids": [
+        "all"
+      ],
+      "role": "Potion: mana"
+    },
+    {
+      "name": "Major Healing Potion",
+      "raids": [
+        "all"
+      ],
+      "role": "Potion: health"
+    },
+    {
+      "name": "Greater Stoneshield Potion",
+      "raids": [
+        "all"
+      ],
+      "role": "Potion: tanks"
+    },
+    {
+      "name": "Free Action Potion",
+      "raids": [
+        "all"
+      ],
+      "role": "Utility"
+    },
+    {
+      "name": "Restorative Potion",
+      "raids": [
+        "all"
+      ],
+      "role": "Utility"
+    },
+    {
+      "name": "Limited Invulnerability Potion",
+      "raids": [
+        "all"
+      ],
+      "role": "Utility"
+    },
+    {
+      "name": "Major Rejuvenation Potion",
+      "raids": [
+        "all"
+      ],
+      "role": "Potion: health + mana"
+    },
+    {
+      "name": "Dense Sharpening Stone",
+      "raids": [
+        "all"
+      ],
+      "role": "Weapon buff"
+    },
+    {
+      "name": "Elemental Sharpening Stone",
+      "raids": [
+        "all"
+      ],
+      "role": "Weapon buff"
+    },
+    {
+      "name": "Dense Weightstone",
+      "raids": [
+        "all"
+      ],
+      "role": "Weapon buff"
+    },
+    {
+      "name": "Brilliant Wizard Oil",
+      "raids": [
+        "all"
+      ],
+      "role": "Weapon buff: casters"
+    },
+    {
+      "name": "Brilliant Mana Oil",
+      "raids": [
+        "all"
+      ],
+      "role": "Weapon buff: healers"
+    },
+    {
+      "name": "Grilled Squid",
+      "raids": [
+        "all"
+      ],
+      "role": "Food: agility"
+    },
+    {
+      "name": "Nightfin Soup",
+      "raids": [
+        "all"
+      ],
+      "role": "Food: mana"
+    },
+    {
+      "name": "Runn Tum Tuber Surprise",
+      "raids": [
+        "all"
+      ],
+      "role": "Food: intellect"
+    },
+    {
+      "name": "Smoked Desert Dumplings",
+      "raids": [
+        "all"
+      ],
+      "role": "Food: strength"
+    },
+    {
+      "name": "Heavy Runecloth Bandage",
+      "raids": [
+        "all"
+      ],
+      "role": "Bandage"
+    },
+    {
+      "name": "Black Lotus",
+      "raids": [
+        "all"
+      ],
+      "role": "Mat: flasks"
+    },
+    {
+      "name": "Death Lotus",
+      "raids": [
+        "Barrow Deeps",
+        "Hyjal Summit"
+      ],
+      "role": "Mat: Natural flasks"
+    },
+    {
+      "name": "Demonsage",
+      "raids": [
+        "Barrow Deeps",
+        "Hyjal Summit"
+      ],
+      "role": "Mat: Natural flasks"
+    },
+    {
+      "name": "Golden Sansam",
+      "raids": [
+        "all"
+      ],
+      "role": "Mat: flasks, mana pots"
+    },
+    {
+      "name": "Mountain Silversage",
+      "raids": [
+        "all"
+      ],
+      "role": "Mat: flasks, elixirs"
+    },
+    {
+      "name": "Dreamfoil",
+      "raids": [
+        "all"
+      ],
+      "role": "Mat: mana pots, elixirs"
+    },
+    {
+      "name": "Plaguebloom",
+      "raids": [
+        "all"
+      ],
+      "role": "Mat: flasks"
+    },
+    {
+      "name": "Icecap",
+      "raids": [
+        "all"
+      ],
+      "role": "Mat: flasks"
+    },
+    {
+      "name": "Gromsblood",
+      "raids": [
+        "all"
+      ],
+      "role": "Mat: Mageblood"
+    },
+    {
+      "name": "Sungrass",
+      "raids": [
+        "all"
+      ],
+      "role": "Mat: elixirs"
+    },
+    {
+      "name": "Stonescale Eel",
+      "raids": [
+        "all"
+      ],
+      "role": "Mat: Stoneshield, Oil"
+    },
+    {
+      "name": "Elemental Fire",
+      "raids": [
+        "Onyxia's Lair"
+      ],
+      "role": "Mat: Fire Protection"
+    }
+  ]
+}

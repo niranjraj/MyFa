@@ -1,0 +1,12 @@
+# Desk: your own settings, data and generated output
+MyFA-Desk/config.json
+MyFA-Desk/data/
+MyFA-Desk/report.html
+MyFA-Desk/claude_brief.md
+MyFA-Desk/claude_advice.md
+MyFA-Desk/raids.new.json
+MyFA-Desk/Targets.lua
+__pycache__/
+*.pyc
+*.tmp
+dist/
