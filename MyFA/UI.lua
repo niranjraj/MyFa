@@ -221,24 +221,13 @@ local function rowTooltip(self)
         steps = { "Mats cost " .. ns.Money(e.cost) .. ", the result sells for " .. ns.Money(e.value) .. " after the cut.",
                   "Craft it, then post it at today's lowest price." }
     elseif currentTab == "listed" then
-        steps = { string.format("You have %d listed in %d auction%s; your highest price is %s each.", e.qty, e.n, e.n == 1 and "" or "s", ns.Money(e.u or 0)) }
-        if e.status == "undercut" then
-            steps[#steps + 1] = "Someone lists it at " .. ns.Money(e.other) .. ". Buyers take theirs first."
-            steps[#steps + 1] = "Cancel cancels your highest-priced auction (one per click). The deposit is lost and the items come back by mail."
-            steps[#steps + 1] = "Then Post it from the Sell tab at " .. ns.Money(e.repost) .. "."
-        elseif e.status == "floor" then
-            steps[#steps + 1] = "Someone lists it at " .. ns.Money(e.other) .. ", under the lowest price worth selling at (" .. ns.Money(e.floor or 0) .. "). Reposting would lose money: let yours sit or wait it out."
-        elseif e.status == "lowest" then
-            steps[#steps + 1] = "Nobody is cheaper. Leave it."
-        else
-            steps[#steps + 1] = "No price data for it yet. Press Check prices."
-        end
-        steps[#steps + 1] = "Prices from " .. (e.source == "live" and "a live search." or "your last scan. Check prices for live ones.")
+        steps = ns.AuctionAdvice(e)
     elseif currentTab == "mine" then
         steps = { string.format("You paid %s each for %d.", ns.Money(e.cost), e.qty),
                   "Lowest now: " .. (e.now and ns.Money(e.now) or "not listed") .. ". MyFA alerts you at " .. ns.Money(e.target) .. ".",
                   e.ready and "Sell now: post at the lowest price." or "Keep it until the alert.",
-                  "Where: " .. (e.where or "?") }
+                  "Where: " .. (e.where or "?"),
+                  e.since and ("Bought " .. ns.Duration(time() - e.since) .. " ago.") or nil }
     end
     if #steps > 0 then
         GameTooltip:AddLine(" ")
@@ -351,14 +340,20 @@ local function updateRow(r, e)
             r.buy:SetText("Post"); r.buy:Enable(); r.buy:Show()
         end
     elseif currentTab == "listed" then
-        local state
-        if e.status == "undercut" then state = tag(RED, "UNDERCUT") .. "cheapest other " .. ns.Money(e.other)
-        elseif e.status == "floor" then state = tag(GOLDC, "UNDER YOUR FLOOR") .. "other " .. ns.Money(e.other) .. ", keep yours"
-        elseif e.status == "lowest" then state = tag(GREEN, "LOWEST") .. (e.other and ("next " .. ns.Money(e.other)) or "only you list it")
-        else state = tag(GREY, "NO PRICE") .. "press Check prices" end
-        r.detail:SetText(string.format("%s  %sx%d at %s|r", state, MUTED, e.qty, ns.Money(e.u or 0)))
-        r.profit:SetText(e.repost and (RED .. "repost " .. ns.Money(e.repost) .. "|r") or "")
-        if e.status == "undercut" and ahOpen() then
+        -- name line, right: what's going on; detail line: the price to act on and the timing
+        local status, what
+        if e.status == "undercut" then status, what = RED .. "UNDERCUT|r", "repost " .. ns.Money(e.repost)
+        elseif e.status == "fell" then status, what = RED .. "PRICE FELL|r", "now ~" .. ns.Money(e.wall or e.other)
+        elseif e.status == "dump" then status, what = GOLDC .. "CHEAP DUMP|r", e.repost and ("repost " .. ns.Money(e.repost)) or ("most at " .. ns.Money(e.wall))
+        elseif e.status == "lowest" then status, what = GREEN .. "LOWEST|r", "x" .. e.qty .. " at " .. ns.Money(e.u or 0)
+        else status, what = GREY .. "NO PRICE|r", "x" .. e.qty .. " at " .. ns.Money(e.u or 0) end
+        if e.high and e.status ~= "fell" then status = RED .. "TOO HIGH|r" end
+        local timing = {}
+        if e.since then timing[#timing + 1] = "up " .. ns.Duration(time() - e.since) end
+        if e.left then timing[#timing + 1] = ns.Duration(e.left) .. " left" end
+        r.detail:SetText(what .. (#timing > 0 and ("  " .. MUTED .. table.concat(timing, " · ") .. "|r") or ""))
+        r.profit:SetText(status)
+        if (e.status == "undercut" or e.status == "fell" or e.repost or e.high) and ahOpen() then
             r.buy:SetText("Cancel"); r.buy:Enable(); r.buy:Show()
         end
     elseif currentTab == "mine" then

@@ -67,7 +67,13 @@ Items with fewer than 10 listed (often recipes and patterns) are thin markets. T
   - Duration is the longest one whose deposit is worth risking for how often the item sells for you.
   - A red SELL tag means the deposit is high for something that rarely sells.
 - **If you post through another addon's window** (The Market, say), the plan is also printed in chat: type those numbers there.
-- **Listed tab:** your auctions here, marked UNDERCUT (with a repost price), UNDER YOUR FLOOR (keep yours) or LOWEST.
+- **Listed tab:** your auctions here, each with how long it's been up (back through relists), how many relists, and time left. Each one is marked:
+  - **UNDERCUT** (with a repost price);
+  - **PRICE FELL** (the market dropped under what you paid; your price won't sell);
+  - **CHEAP DUMP** (a few cheap units; most still sell above your floor);
+  - **TOO HIGH**;
+  - **LOWEST**.
+  Hover a row for what to do. Desk shows the same on My flips under **Your auctions**.
   - **Check prices** looks up live prices, one search at a time.
   - **Cancel** cancels one auction per click. The deposit is lost and the items come back by mail; then post them again from the Sell tab.
 

@@ -57,7 +57,13 @@ function ns.SnapshotOwnedAuctions()
     end
     local c = ns.Char()
     c.listed = c.listed or {}
-    c.listed[ns.AHKind()] = { items = items, auctions = auctions, t = time() }
+    -- remember when each auction was first seen, for auctions posted where MyFA couldn't see the post
+    local prev = c.listed[ns.AHKind()]
+    local first = {}
+    for _, a in ipairs(auctions) do
+        if a.aid then first[a.aid] = (prev and prev.first and prev.first[a.aid]) or time() end
+    end
+    c.listed[ns.AHKind()] = { items = items, auctions = auctions, t = time(), first = first }
 end
 
 -- posting: record what you listed and what the deposit was ------------------------------------------

@@ -769,6 +769,74 @@ def analyse(sv, history: History, cfg, now=None):
     order = {"Sell now": 0, "Hold": 1, "Under water": 2, "Not listed": 3}
     positions.sort(key=lambda r: (order[r["status"]], -(r["pl"] or -10**12)))
 
+    # ---- your auctions: how long they've been up, and whether they're undercut ---------------------------
+    pos_cost = {r["id"]: r["cost"] for r in positions}
+    my_auctions = []
+    posts = [p_ for p_ in (db.get("posts") or []) if isinstance(p_, dict)]
+    for key, c in char_items:
+        who = key.split("-")[0]
+        for kind, l in (c.get("listed") or {}).items():
+            l = l or {}
+            snap_t = int(l.get("t") or now)
+            first = {int(k): int(v) for k, v in (l.get("first") or {}).items()}
+            groups = {}
+            for a in l.get("auctions") or []:
+                i = int(a["id"])
+                g = groups.setdefault(i, {"id": i, "qty": 0, "u": 0, "left": None, "seen": None})
+                g["qty"] += int(a.get("q") or 1)
+                g["u"] = max(g["u"], int(a.get("u") or 0))
+                if a.get("tl") is not None:
+                    left = max(0, int(a["tl"]) - (now - snap_t))
+                    g["left"] = left if g["left"] is None else min(g["left"], left)
+                seen = first.get(int(a.get("aid") or -1))
+                if seen and (g["seen"] is None or seen < g["seen"]):
+                    g["seen"] = seen
+            mscan = scan if kind != "neutral" else {int(k): v for k, v in ((neutral_realm or {}).get("items") or {}).items()}
+            kcut = cut if kind != "neutral" else float(cfg.get("neutral_cut", 0.15))
+            for i, g in groups.items():
+                chain = sorted((p_ for p_ in posts if p_.get("id") == i and p_.get("c") == key and (p_.get("a") or "home") == kind),
+                               key=lambda p_: -(p_.get("t") or 0))
+                since, relists = None, 0
+                for p_ in chain:
+                    if p_.get("r") == "sold":
+                        break
+                    since = p_.get("t")
+                    if p_.get("r") in ("expired", "cancelled"):
+                        relists += 1
+                if g["seen"] and (since is None or g["seen"] < since):
+                    since = g["seen"]
+                s_ = mscan.get(i) or {}
+                other = s_.get("o") or (s_.get("m") if s_.get("m") and s_.get("m") < g["u"] else None)
+                if s_.get("x"):
+                    other = None
+                wall = _wall(s_.get("l") or [], s_.get("q") or 0) if s_.get("l") else None
+                v = (meta.get(i) or {}).get("v") or 0
+                floor = math.ceil(v / (1 - kcut))
+                if i in pos_cost:
+                    floor = max(floor, math.ceil(pos_cost[i] / (1 - kcut)))
+                repost = None
+                if other and other < g["u"]:
+                    if other >= floor:
+                        status, repost = "Undercut", other
+                    elif wall and wall >= floor:
+                        status = "Cheap dump"
+                        repost = wall if g["u"] > wall * 1.15 else None
+                    else:
+                        status = "Price fell"
+                elif s_:
+                    status = "Lowest"
+                else:
+                    status = "No price"
+                mk = market(i) if kind != "neutral" else wall
+                my_auctions.append({
+                    "id": i, "name": name(i), "q": quality(i), "who": who, "ah": kind, "qty": g["qty"], "u": g["u"],
+                    "other": other, "wall": wall, "status": status, "repost": repost, "since": since, "relists": relists,
+                    "left": g["left"], "snap": snap_t, "floor": floor,
+                    "high": bool(mk and g["u"] > mk * 1.5 and status != "Lowest"),
+                })
+    order_a = {"Price fell": 0, "Undercut": 1, "Cheap dump": 2, "No price": 3, "Lowest": 4}
+    my_auctions.sort(key=lambda r: (order_a[r["status"]], -(r["u"] * r["qty"])))
+
     # ---- neutral Auction House: a separate market both factions share ---------------------------------
     neutral = neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, hist, meta, name, quality,
                              riskm, cut, budget, inventory, flips)
@@ -869,7 +937,7 @@ def analyse(sv, history: History, cfg, now=None):
         "manual": manual, "names": {(m.get("n") or "").lower(): i for i, m in meta.items() if m.get("n")},
         "profiles": profiles, "next_moves": next_moves,
         "mail_seen": any(c.get("mailT") for c in chars),
-        "neutral": neutral, "profit": profit,
+        "neutral": neutral, "profit": profit, "my_auctions": my_auctions,
         "risk": {"p0": riskm.p0, "p0_basis": riskm.p0_basis, "dep_rate": riskm.dep_rate, "dep_learned": riskm.dep_learned,
                  "units": {i: int(riskm.per_unit(i, "home")) for i in {r["id"] for r in positions} | {r["id"] for r in flips}
                            if riskm.per_unit(i, "home") >= 1},

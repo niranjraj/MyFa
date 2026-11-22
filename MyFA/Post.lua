@@ -292,9 +292,38 @@ function ns.IsCheckingPrices() return checking, current, queue and #queue or 0 e
 
 -- your auctions, with what the cheapest other seller asks ------------------------------------------
 
+-- where most of the supply sits: the cheapest price level holding a fifth of all listed units
+local function wallOf(s)
+    if not (s and s.l and #s.l > 0) then return nil end
+    local need = math.max(5, (s.q or 0) * 0.2)
+    for _, lv in ipairs(s.l) do
+        if lv[2] >= need then return lv[1] end
+    end
+    return s.l[#s.l][1]
+end
+
+-- how long you've been trying to sell an item here: back through relists to your last sale
+local function listingHistory(id, charKey, kind, auctionsFirst)
+    local chain, since, relists = {}, nil, 0
+    for _, p in ipairs(MyFA_DB.posts) do
+        if p.id == id and p.c == charKey and (p.a or "home") == kind then chain[#chain + 1] = p end
+    end
+    table.sort(chain, function(a, b) return (a.t or 0) > (b.t or 0) end)
+    for _, p in ipairs(chain) do
+        if p.r == "sold" then break end
+        since = p.t
+        if p.r == "expired" or p.r == "cancelled" then relists = relists + 1 end
+    end
+    if auctionsFirst and (not since or auctionsFirst < since) then since = auctionsFirst end
+    return since, relists
+end
+
 function ns.MyAuctions()
-    local c = MyFA_DB.chars[ns.CharKey()]
-    local l = c and c.listed and c.listed[ns.AHKind()]
+    local key = ns.CharKey()
+    local c = MyFA_DB.chars[key]
+    local kind = ns.AHKind()
+    local l = c and c.listed and c.listed[kind]
+    local now = time()
     local out, byItem = {}, {}
     for _, a in ipairs(l and l.auctions or {}) do
         local g = byItem[a.id]
@@ -307,31 +336,92 @@ function ns.MyAuctions()
         g.n = g.n + 1
         if a.u and (not g.u or a.u > g.u) then g.u = a.u end   -- your highest price is the one that gets undercut first
         g.aids[#g.aids + 1] = { aid = a.aid, u = a.u, q = a.q }
+        local seen = a.aid and l.first and l.first[a.aid]
+        if seen and (not g.firstSeen or seen < g.firstSeen) then g.firstSeen = seen end
+        if a.tl then
+            local left = a.tl - (now - (l.t or now))
+            if not g.left or left < g.left then g.left = math.max(0, left) end
+        end
     end
+    local realm = MyFA_DB.realms[ns.MarketKey()]
+    local deskPrices = MyFA_Targets and MyFA_Targets.prices or {}
     for _, g in ipairs(out) do
+        g.since, g.relists = listingHistory(g.id, key, kind, g.firstSeen)
         local other, source = lowestOther(g.id)
         g.other, g.source = other, source
+        local s = realm and realm.items and realm.items[g.id]
+        g.wall = wallOf(s)
+        g.market = (kind == "home" and deskPrices[g.id]) or g.wall
         local plan = ns.PostPlan(g.id)
-        g.floor = plan.floor
+        g.floor, g.cost = plan.floor, plan.cost
         if other and g.u and other < g.u then
-            if other < (g.floor or 0) then
-                g.status, g.repost = "floor", nil
-            else
+            if other >= (g.floor or 0) then
                 g.status, g.repost = "undercut", other
+            elseif g.wall and g.wall >= (g.floor or 0) then
+                -- a few cheap ones, but most of the supply still sells above your floor
+                g.status = "dump"
+                g.repost = (g.u > g.wall * 1.15) and g.wall or nil
+            else
+                -- the market itself moved under what you paid
+                g.status, g.repost = "fell", nil
             end
         elseif other or source == "scan-only-you" then
             g.status = "lowest"
         else
             g.status = "unknown"
         end
+        -- far above where the item trades: it will just expire
+        g.high = g.market and g.u and g.u > g.market * 1.5 and g.status ~= "lowest" or nil
         table.sort(g.aids, function(a, b) return (a.u or 0) > (b.u or 0) end)
     end
-    local order = { undercut = 0, floor = 1, unknown = 2, lowest = 3 }
+    local order = { fell = 0, undercut = 1, dump = 2, unknown = 3, lowest = 4 }
     table.sort(out, function(a, b)
         if a.status ~= b.status then return order[a.status] < order[b.status] end
         return (a.u or 0) * a.qty > (b.u or 0) * b.qty
     end)
     return out
+end
+
+-- one line of advice for an auction group, used by the panel tooltip and chat
+function ns.AuctionAdvice(g)
+    local lines = {}
+    local up = g.since and ns.Duration(time() - g.since)
+    lines[#lines + 1] = string.format("%d listed at %s each%s%s.", g.qty, ns.Money(g.u or 0),
+        up and (", on the Auction House for " .. up) or ", listed before MyFA could see the post",
+        (g.relists or 0) == 1 and " (relisted once)" or (g.relists or 0) > 1 and string.format(" (relisted %d times)", g.relists) or "")
+    if g.left then lines[#lines + 1] = "Time left: " .. ns.Duration(g.left) .. (g.left <= 0 and " (expired: the mail is on its way)" or "") .. "." end
+    if g.status == "undercut" then
+        lines[#lines + 1] = "Someone lists it at " .. ns.Money(g.other) .. ". Buyers take theirs first."
+        lines[#lines + 1] = "Cancel your auction (one per click), collect it from the mail and post again at " .. ns.Money(g.repost) .. "."
+    elseif g.status == "dump" then
+        lines[#lines + 1] = string.format("A few are dumped at %s, but most of the supply sits at %s. The cheap ones usually go fast.",
+            ns.Money(g.other), ns.Money(g.wall))
+        lines[#lines + 1] = g.repost and ("Yours is above that: repost at about " .. ns.Money(g.repost) .. ".")
+            or "Yours is in that range: leave it."
+        if g.other * 1.15 < g.wall * (1 - ns.CutRate(ns.AHKind())) then
+            lines[#lines + 1] = "Buying the cheap ones and relisting them near " .. ns.Money(g.wall) .. " is a flip in itself."
+        end
+    elseif g.status == "fell" then
+        lines[#lines + 1] = string.format("The market fell: most of the supply is now around %s%s.", ns.Money(g.wall or g.other),
+            g.cost and (", under the " .. ns.Money(g.cost) .. " you paid") or ", under your floor")
+        lines[#lines + 1] = "At " .. ns.Money(g.u or 0) .. " it won't sell, and every relist costs a deposit."
+        lines[#lines + 1] = string.format("Either sell near %s and take the loss%s, or take it off the Auction House and hold it until the price recovers.",
+            ns.Money(g.wall or g.other), g.cost and (" (about " .. ns.Money(((g.cost or 0) - (g.wall or g.other) * (1 - ns.CutRate(ns.AHKind()))) * g.qty) .. ")") or "")
+        local usual = MyFA_Targets and MyFA_Targets.prices and MyFA_Targets.prices[g.id]
+        if usual and g.wall and usual > g.wall * 1.2 then
+            lines[#lines + 1] = "It usually trades around " .. ns.Money(usual) .. ", so holding may get some of it back."
+        end
+    elseif g.status == "lowest" then
+        lines[#lines + 1] = g.other and ("You're the cheapest; next is " .. ns.Money(g.other) .. ". Leave it.") or "Only you list it. Leave it."
+    else
+        lines[#lines + 1] = "No price data for it yet. Press Check prices."
+    end
+    if g.high and g.status ~= "fell" and not g.repost then
+        lines[#lines + 1] = string.format("Your price is %d times where it trades (%s): it will expire unsold.",
+            math.floor(g.u / g.market + 0.5), ns.Money(g.market))
+    end
+    lines[#lines + 1] = "Prices from " .. (g.source == "live" and "a live search." or "your last scan. Check prices for live ones.")
+    return lines
 end
 
 -- Cancel one auction: your click, one auction per click (the game requires that)
@@ -370,9 +460,15 @@ ev:SetScript("OnEvent", function(_, event, arg)
             warnedVisit = true
             C_Timer.After(0.2, function()
                 local n = 0
-                for _, a in ipairs(ns.MyAuctions()) do if a.status == "undercut" then n = n + 1 end end
+                local fell = 0
+                for _, a in ipairs(ns.MyAuctions()) do
+                    if a.status == "undercut" then n = n + 1 elseif a.status == "fell" then fell = fell + 1 end
+                end
                 if n > 0 then
                     ns.Print(string.format("%s%d of your auctions look undercut|r (from your last scan). Open MyFA's Listed tab, or press Check prices there for live prices.", RED, n))
+                end
+                if fell > 0 then
+                    ns.Print(string.format("%s%d of your auctions are priced far above a market that fell under what you paid.|r See the Listed tab.", RED, fell))
                 end
             end)
         end

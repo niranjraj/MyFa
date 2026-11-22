@@ -1,6 +1,6 @@
 -- MyFA Core: saved data, character snapshot (bags, gold, recipes, vendor prices), slash commands.
 local ADDON, ns = ...
-ns.VERSION = "1.7.0"
+ns.VERSION = "1.7.1"
 ns.HISTORY_DAYS = 14
 
 local DB_DEFAULTS = {
@@ -49,6 +49,18 @@ function ns.Money(copper)
         out = string.format("%d|cffc58a4ac|r", c)
     end
     return neg and ("-" .. out) or out
+end
+
+-- 95 -> "1m", 5400 -> "1h 30m", 200000 -> "2d 7h"
+function ns.Duration(sec)
+    sec = math.max(0, math.floor(sec or 0))
+    if sec < 3600 then return math.max(1, math.floor(sec / 60)) .. "m" end
+    if sec < 86400 then
+        local h, m = math.floor(sec / 3600), math.floor((sec % 3600) / 60)
+        return m > 0 and (h .. "h " .. m .. "m") or (h .. "h")
+    end
+    local d, h = math.floor(sec / 86400), math.floor((sec % 86400) / 3600)
+    return h > 0 and (d .. "d " .. h .. "h") or (d .. "d")
 end
 
 function ns.RealmKey()

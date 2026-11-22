@@ -391,6 +391,17 @@ def _signed_cls(v):
     return "pos" if (v or 0) > 0 else ("neg" if (v or 0) < 0 else "")
 
 
+def _dur(sec):
+    sec = max(0, int(sec))
+    if sec < 3600:
+        return f"{max(1, sec // 60)}m"
+    if sec < 86400:
+        h, m = sec // 3600, (sec % 3600) // 60
+        return f"{h}h {m}m" if m else f"{h}h"
+    d, h = sec // 86400, (sec % 86400) // 3600
+    return f"{d}d {h}h" if h else f"{d}d"
+
+
 def profit_panel(result, it, sort_or):
     pr = result.get("profit") or {}
     rk = result.get("risk") or {}
@@ -717,6 +728,39 @@ def build(result, advice=None, config_path=""):
         td(f'<button type="button" class="cbtn small live-only" data-forget="{r["id"]}" title="Stop tracking this flip">Remove</button>', None),
     ] for r in result["positions"]]
 
+    AUC_CLS = {"Price fell": "risk-high", "Undercut": "risk-high", "Cheap dump": "risk-med", "Lowest": "act-c", "No price": "act-v"}
+    AUC_ORDER = ["Price fell", "Undercut", "Cheap dump", "No price", "Lowest"]
+    auc_rows = []
+    for r in result.get("my_auctions") or []:
+        if r["status"] == "Undercut":
+            act = f'Repost at {money(r["repost"])}'
+        elif r["status"] == "Price fell":
+            act = (f'Market is near {money(r["wall"] or r["other"])}, under the {money(r["floor"])} you need. It won\'t sell at '
+                   f'{money(r["u"])}: sell near the market and take the loss, or take it off and hold.')
+        elif r["status"] == "Cheap dump":
+            act = (f'A few dumped at {money(r["other"])}; most sell at {money(r["wall"])}. '
+                   + (f'Repost at {money(r["repost"])}.' if r["repost"] else "Leave yours."))
+        elif r["status"] == "Lowest":
+            act = "Cheapest listed. Leave it."
+        else:
+            act = "No price yet: scan or press Check prices in game."
+        if r["high"] and r["status"] not in ("Price fell",) and not r["repost"]:
+            act += " Far above where it trades: it will expire."
+        left = r["left"]
+        auc_rows.append([
+            td(it(r), r["name"]),
+            td(f'<span class="{AUC_CLS[r["status"]]}">{esc(r["status"])}</span>', AUC_ORDER.index(r["status"]), "nowrap"),
+            td(esc(r["who"]) + (' <span class="sub">neutral</span>' if r["ah"] == "neutral" else ""), r["who"]),
+            td(f'{r["qty"]:,}', r["qty"], "num"),
+            td(money(r["u"]), r["u"], "num"),
+            td(money(r["other"]) if r["other"] else '<span class="na">none</span>', sort_or(r["other"]), "num"),
+            td(money(r["wall"]) if r["wall"] else '<span class="na">n/a</span>', sort_or(r["wall"]), "num"),
+            td(_dur(now - r["since"]) if r["since"] else '<span class="na">before MyFA saw it</span>', -(r["since"] or now), "num"),
+            td((_dur(max(0, left - (now - r["snap"]))) if left is not None else '<span class="na">n/a</span>'), sort_or(left), "num"),
+            td(f'{r["relists"]:,}' if r["relists"] else '<span class="na">0</span>', r["relists"], "num"),
+            td(act, None, "why"),
+        ])
+
     names = {}
     for group in ("flips", "vendor", "inventory", "trends"):
         for r in result[group]:
@@ -752,7 +796,15 @@ def build(result, advice=None, config_path=""):
                    "What to do next for gold and professions, for each of your characters."))
     ready = [r for r in result["positions"] if r["status"] == "Sell now"]
     roi_pct = int(round(result["roi"] * 100))
-    panels.append(("mine", "My flips", len(result["positions"]), ADD_FORM + table("mine", [
+    auctions_html = ('<section class="block auctions"><div class="blockhead"><h2>Your auctions</h2>'
+                     '<p class="lede">What you have listed, as of each character\'s last Auction House visit. <em>Up for</em> counts back '
+                     'through relists to your last sale; <em>Most supply at</em> is where the bulk of other listings sits.</p></div>'
+                     + table("auctions", [("Item", "s", ""), ("Status", "n", ""), ("Character", "s", ""), ("Qty", "n", "num"),
+                                          ("Your price", "n", "num"), ("Cheapest other", "n", "num"), ("Most supply at", "n", "num"),
+                                          ("Up for", "n", "num"), ("Time left", "n", "num"), ("Relists", "n", "num"),
+                                          ("What to do", "s", "why")], auc_rows, "")
+                     + '</section>') if auc_rows else ""
+    panels.append(("mine", "My flips", len(result["positions"]), ADD_FORM + auctions_html + table("mine", [
         ("Item", "s", ""), ("Status", "n", ""), ("Qty", "n", "num"), ("Where", "s", ""), ("You paid", "n", "num"),
         ("Lowest now", "n", "num"), ("Alert at", "n", "num"), ("Aim to sell at", "n", "num"), ("Profit now", "n", "num"),
         ("Trend", "n", "num"), ("Bought", "n", ""), ("Note", "s", "why"), ("", "s", "")], pos_rows,
@@ -1156,6 +1208,7 @@ td.barcell {{ vertical-align: middle; }}
   padding: 16px 18px 10px; }}
 .readylist li .sub {{ margin-left: 4px; }}
 .neutralstat {{ margin: 0 0 22px; }}
+.block.auctions {{ margin-bottom: 28px; }}
 @media (max-width: 720px) {{ table.stmt .opt {{ display: none; }} table.stmt th[scope=row] .sub {{ display: none; }} }}
 footer {{ margin-top: 28px; color: var(--faint); font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 6px 24px; }}
 @media (prefers-reduced-motion: reduce) {{ * {{ transition: none !important; }} }}

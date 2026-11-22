@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.7.1
+- **How long your auctions have been up.** The Listed tab (and Desk's new **Your auctions** table on My flips) shows:
+  - how long you've been trying to sell each item, counted back through relists to your last sale;
+  - how many times you've relisted it;
+  - how long is left on the current auction.
+  Auctions posted where MyFA couldn't see the post count from the first time MyFA saw them listed.
+- **Price fell** (new): when the whole market has dropped below what you paid, MyFA says so. It tells you your price won't sell and every relist costs a deposit, shows the loss if you sell near the market, and mentions the usual price if holding may recover it. 1.7.0 wrongly told you to keep your price in this case.
+- **Cheap dump** (new): a few units dumped cheap while most of the supply still sells above your floor. MyFA tells you to leave yours, or repost at where the supply sits if you're well above it, and points out when buying the dumped ones is a flip.
+- **Too high**: flagged when your price is more than 1.5 times where the item trades.
+- Opening the Auction House warns about auctions whose market fell, as well as undercuts.
+- My flips tooltips say how long ago you bought.
+
 ## 1.7.0
 - **Posting helper.** Rows on the Sell tab show MyFA's plan, for example *post 20 at 3s 61c, 24 Hours*. Press **Post** and MyFA puts the item in Blizzard's sell window and fills in the price, quantity and duration; you check it and press Post there. MyFA never posts for you.
   - **Price:** the cheapest listing from another seller (live when your Auction House window has just searched it), never below your floor. The floor is what you paid plus the cut and likely lost deposits, or the vendor price for things you didn't buy.
