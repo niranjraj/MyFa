@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0
+- No more terminal: double-click **MyFA Desk.pyw** and Desk runs quietly in the background. It opens your dashboard as a live app in the browser.
+- Control bar on the dashboard: status (watching, paused, setup needed), a "New scan ready" button after each /reload, Pause/Resume, Check for updates (turns gold when one is out; one click installs it and restarts), Settings and Quit.
+- Settings in the page: WoW Forever folder (with Find it), account, Auction House cut, Windows notifications, update mode, and "Add MyFA to desktop" for a desktop shortcut.
+- First-run setup happens in the page instead of a terminal prompt. An activity log shows what Desk is doing.
+- Only your own PC can reach the page (127.0.0.1); other websites can't control it.
+- `run_desk.bat` still works if you prefer the terminal.
+- After updating from 1.1.0 in the terminal, close it and start **MyFA Desk.pyw** from now on.
+
 ## 1.1.0
 - The panel docks beside whichever Auction House window is open (Blizzard's or another addon's, such as a custom market window) and remembers where you drag it. `/myfa dock` snaps it back.
 - Flip tracking: every Auction House purchase is recorded automatically, from the MyFA panel, the Blizzard window or another addon. Add older purchases with `/myfa bought [item] qty price`.

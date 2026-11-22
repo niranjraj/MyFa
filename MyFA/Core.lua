@@ -1,6 +1,6 @@
 -- MyFA Core: saved data, character snapshot (bags, gold, recipes, vendor prices), slash commands.
 local ADDON, ns = ...
-ns.VERSION = "1.1.0"
+ns.VERSION = "1.2.0"
 ns.HISTORY_DAYS = 14
 
 local DB_DEFAULTS = {

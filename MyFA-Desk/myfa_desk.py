@@ -331,7 +331,7 @@ def process(sv_path: Path, targets_path: Path, cfg, history, args, first=False):
           f"Targets ready. Type /reload in game.")
     if first and cfg.get("open_report") and not args.no_open:
         webbrowser.open(REPORT_PATH.as_uri())
-    return True
+    return result
 
 
 def main():

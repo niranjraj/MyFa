@@ -13,15 +13,17 @@ Nothing is automated. Every purchase is your click, and WoW itself requires that
    `World of Warcraft\_forever_\Interface\AddOns\MyFA`
    (the `.toc` file must sit directly inside `AddOns\MyFA`). Enable it at the character screen.
 2. **Python:** install Python 3.9 or newer from python.org and tick **Add python.exe to PATH**. The app uses only the standard library, so there's nothing else to install.
-3. **Desk:** put the `MyFA-Desk` folder anywhere (Documents is fine) and double-click `run_desk.bat`.
-   It finds your `_forever_` folder and WoW account on its own. If it can't, it asks: in Battle.net, click the gear next to Play, then **Show in Explorer**.
+3. **Desk:** put the `MyFA-Desk` folder anywhere (Documents is fine) and double-click **`MyFA Desk.pyw`**. No terminal opens: Desk runs quietly in the background and opens your dashboard in the browser at `http://127.0.0.1:47800`. If it can't find your `_forever_` folder, the page shows **Setup needed**: open **Settings**, press **Find it** or paste the folder (Battle.net, gear next to Play, **Show in Explorer**), then **Save**.
+4. In **Settings**, press **Add MyFA to desktop** for a desktop icon you can double-click next time.
+
+Prefer a terminal? `run_desk.bat` still works the same as before.
 
 ## The loop
 
-1. Start `run_desk.bat` and leave it open.
+1. Start **MyFA Desk** (double-click) and leave it running. The bar at the top of the dashboard shows **Watching** with a pulsing green dot.
 2. In game, open the Auction House. The MyFA panel docks to its right. Press **Full scan**.
    Blizzard allows one full scan every 15 minutes; the button counts down.
-3. Type `/reload`. WoW saves the scan, Desk reads it within about 2 seconds and prints *Targets ready*.
+3. Type `/reload`. WoW saves the scan, Desk reads it within about 2 seconds, and the dashboard shows **New scan ready, refresh**.
 4. Type `/reload` again. The panel now has your targets.
 5. **Buy:** press Buy. The addon asks the server for the live price and only offers **Confirm** if it's at or under the max. Press Confirm to buy.
    Gear only has **Search**, which jumps the Auction House to the item.
@@ -91,11 +93,24 @@ Market value is set by where the bulk of supply sits, not by the cheapest listin
 
 Desk reloads the config on every scan, so there's no need to restart it.
 
+## The control bar
+
+The top of the dashboard is MyFA Desk's control panel:
+
+- **Status:** Watching (green), Reading scan, Paused, Waiting for first scan, Setup needed, or Problem, plus your realm, scan age, buy targets, flips ready to sell and number of characters.
+- **New scan ready, refresh:** appears after each /reload. If the tab is in the background, it refreshes by itself.
+- **Pause / Resume:** stop and restart reading new scans.
+- **Check for updates:** turns gold as **Update to vX.Y.Z** when there's a new version. One click installs it (Desk and addon) and restarts Desk.
+- **Settings:** WoW folder, account, Auction House cut, Windows notifications, update mode, **Add MyFA to desktop**, and an activity log.
+- **Quit:** stops Desk. Double-click MyFA Desk to start it again. Starting it while it's already running just opens the dashboard.
+
+The page is only reachable from your own PC. If port 47800 is taken, set `"port"` in `config.json`.
+
 ## Updates
 
 Desk checks [github.com/niranjraj/MyFa](https://github.com/niranjraj/MyFa/releases) for a new release each time it starts. When there is one, it asks, then updates itself and the MyFA addon in your `_forever_` folder; type `/reload` in game afterwards. Your `config.json`, price history, Targets.lua and any edits to `raids.json` are kept. If you edited `raids.json`, the new one is saved as `raids.new.json` next to it.
 
-- `run_desk.bat --update` checks right now; `--version` shows what you have.
+- In the app, **Check for updates** in the top bar checks right now. In the terminal, `run_desk.bat --update`; `--version` shows what you have.
 - In `config.json`, `"auto_update"` can be `"ask"` (default), `"always"` or `"never"`.
 
 ## Raid calendar (`raids.json`)
