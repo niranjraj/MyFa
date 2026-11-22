@@ -43,6 +43,9 @@ DEFAULTS = {
     "max_supply_share": 0.35,    # never buy more than 35% of everything listed for an item
     "max_spend_fraction": 0.3,   # never spend more than 30% of your gold on one item
     "max_targets": 40,
+    "min_listed": 10,            # fewer units listed than this = thin market: shown as a risky snipe, not a Buy target
+    "include_snipes": False,     # True puts thin-market snipes in the in-game Buy list too
+    "min_item_value": 100,       # in-game Sell list skips stacks worth less than this (copper; 100 = 1s)
     "history_days": 14,          # days of prices that set "market value"
     "chart_days": 60,            # days of history shown in Trends charts
     "hold_rising_slope": 0.04,   # suggest holding an item rising >= 4% a day instead of selling now

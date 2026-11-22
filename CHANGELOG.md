@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1
+- Clearer panel: tabs are now **Buy**, **Sell**, **Craft** and **My flips**. A line under the tabs explains each one and what its right-hand number means. Rows read in plain words, for example "buy x2, max 74g 20s each" or "post at 35c each".
+- Docking now finds auction windows that other addons place inside Blizzard's Auction House frame, such as wider "market" windows. It also learns which windows close with the Auction House, so it docks right the next time.
+- Thin markets (fewer than 10 listed, often recipes and patterns) are no longer Buy targets. They show as high-risk snipes at the bottom of Desk's Flips tab (`"include_snipes": true` puts them back in game).
+- The in-game Sell list skips stacks worth under 1s (`"min_item_value"` in config.json).
+
 ## 1.2.0
 - No more terminal: double-click **MyFA Desk.pyw** and Desk runs quietly in the background. It opens your dashboard as a live app in the browser.
 - Control bar on the dashboard: status (watching, paused, setup needed), a "New scan ready" button after each /reload, Pause/Resume, Check for updates (turns gold when one is out; one click installs it and restarts), Settings and Quit.

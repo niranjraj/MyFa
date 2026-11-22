@@ -416,7 +416,8 @@ def build(result, advice=None, config_path=""):
             "No flips pass your filters right now. With fewer than 3 days of scans, flips come only from price gaps "
             "inside one scan, so scan once a day. Lowering <code>min_profit</code> or raising <code>flip_threshold</code> "
             "in config.json shows more."),
-         f"Units listed under {int(cfg['flip_threshold'] * 100)}% of market. Profit is after the {cut_pct} AH cut, "
+         f"Units listed under {int(cfg['flip_threshold'] * 100)}% of market. Items with fewer than {cfg['min_listed']} listed are thin markets: "
+         f"they're marked high risk, listed last, and left off the in-game Buy list. Profit is after the {cut_pct} AH cut, "
          f"capped at {int(cfg['max_supply_share'] * 100)}% of supply and {int(cfg['max_spend_fraction'] * 100)}% of your gold per item. "
          "Falling items are marked high risk."),
         ("vendor", "Vendor flips", len(result["vendor"]), table("vendor", [

@@ -245,18 +245,23 @@ def analyse(sv, history: History, cfg, now=None):
             continue
         basis = f"{days}-day history" if days >= 3 else "price gap in this scan"
         risk = "low" if days >= 7 and total >= 40 else ("medium" if days >= 3 else "high")
+        thin = total < int(cfg["min_listed"])
         t = trends.get(i)
         if t and t["slope"] is not None and t["slope"] < -0.05:
             risk = "high"
             basis += f", but falling {t['slope'] * 100:.0f}%/day"
         flips.append({
-            "id": i, "name": name(i), "q": quality(i), "kind": "flip",
+            "id": i, "name": name(i), "q": quality(i), "kind": "snipe" if thin else "flip",
             "max": int(min(top, avg * 1.02)), "qty": units, "avg": int(avg), "sell": int(ref),
             "profit": profit, "roi": round(roi, 3), "listed": total, "days": days, "risk": risk,
-            "why": f"{units} listed under {int(cfg['flip_threshold'] * 100)}% of market ({basis}). "
-                   f"Relist at {fmt(ref)}; {int(cut * 100)}% AH cut included.",
+            "why": (f"Thin market: only {total} listed, so it may take a long time to sell at {fmt(ref)}. "
+                    f"Only for patience or your own use." if thin else
+                    f"{units} listed under {int(cfg['flip_threshold'] * 100)}% of market ({basis}). "
+                    f"Relist at {fmt(ref)}; {int(cut * 100)}% AH cut included."),
         })
-    flips.sort(key=lambda r: r["profit"], reverse=True)
+        if thin:
+            flips[-1]["risk"] = "high"
+    flips.sort(key=lambda r: (r["kind"] == "snipe", -r["profit"]))
     flips = flips[: cfg["max_targets"]]
 
     # ---- vendor flips --------------------------------------------------------
@@ -747,11 +752,13 @@ def fmt(copper):
 def targets_table(result):
     """The data written to Data/Targets.lua for the addon."""
     keys = ("id", "name", "kind", "max", "qty", "profit", "why")
-    buys = [{k: r[k] for k in keys} for r in result["vendor"] + result["flips"]]
+    cfg = result["cfg"]
+    flips = [r for r in result["flips"] if r["kind"] != "snipe" or cfg.get("include_snipes")]
+    buys = [{k: r[k] for k in keys} for r in result["vendor"] + flips]
     buys.sort(key=lambda r: r["profit"], reverse=True)
     sells = [{"id": r["id"], "name": r["name"], "price": r["price"], "qty": r["qty"], "action": r["action"],
               "value": r["value"], "loc": r["loc"], "into": r["into"], "hold": r["hold"], "why": r["note"] or None}
-             for r in result["inventory"]]
+             for r in result["inventory"] if r["value"] >= int(cfg.get("min_item_value", 100))]
     crafts = [{"id": r["id"], "name": r["name"], "cost": r["cost"], "value": r["value"], "profit": r["profit"],
                "why": (f"Can make {r['stock']} from your own stock. " if r["stock"] else "") + r["mats"]}
               for r in result["crafts"] if r["profit"] is not None]

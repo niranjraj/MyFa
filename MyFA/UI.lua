@@ -2,13 +2,21 @@
 local ADDON, ns = ...
 
 local ROWS, ROW_H = 9, 40
-local PANEL_W, PANEL_H = 430, 512
+local PANEL_W, PANEL_H = 430, 540
 local GOLD = { 0.85, 0.71, 0.35 }
 local GREEN = "|cff6fd08a"
 local RED = "|cffe8796b"
 local MUTED = "|cffa9a59a"
 
 local panel, rows, tabs = nil, {}, {}
+
+-- what each tab is for, shown under the tab buttons
+local TAB_HINT = {
+    buys = "Cheap listings worth buying to resell. Right: your profit after reselling. Press Buy, then Confirm.",
+    sells = "What to do with what you own, on every character. Right: what the whole stack is worth.",
+    crafts = "Recipes you know that make a profit. Right: profit per craft. Open a profession window to add recipes.",
+    mine = "Things you bought, tracked until you sell them. Right: profit if you sold now. You get an alert when it's time.",
+}
 local currentTab, offset = "buys", 0
 local pending -- { id, qty, max, state = "starting"|"confirm"|"buying", unit, total }
 
@@ -214,8 +222,8 @@ local function updateRow(r, e)
     r.search:Show()
     if currentTab == "buys" then
         local left = remaining(e)
-        local kind = (e.kind == "vendor" and "vendor flip") or (e.kind == "raid" and "raid stock") or (e.kind or "flip")
-        r.detail:SetText(string.format("%s%s|r  up to %s  x%d", MUTED, kind, ns.Money(e.max), left))
+        local kind = (e.kind == "vendor" and "  vendor flip") or (e.kind == "raid" and "  raid stock") or ""
+        r.detail:SetText(string.format("buy x%d, max %s each%s%s|r", left, ns.Money(e.max), MUTED, kind))
         r.profit:SetText(GREEN .. "+" .. ns.Money(e.profit or 0) .. "|r")
         if isCommodity(e.id) then
             r.buy:Show()
@@ -232,11 +240,11 @@ local function updateRow(r, e)
         end
     elseif currentTab == "sells" then
         local what
-        if e.action == "vendor" then what = "sell to vendor"
-        elseif e.action == "craft" then what = "craft: " .. (e.into or "?")
-        elseif e.action == "hold" then what = (e.hold == "raid") and "hold for raid launch" or "hold, price rising"
-        else what = "post at " .. ns.Money(e.price) end
-        r.detail:SetText(string.format("%s|r  %s%s|r", what, MUTED, e.loc or ("x" .. (e.qty or 0))))
+        if e.action == "vendor" then what = "sell to a vendor"
+        elseif e.action == "craft" then what = "craft it into " .. (e.into or "?")
+        elseif e.action == "hold" then what = (e.hold == "raid") and "keep for raid week" or "keep, price rising"
+        else what = "post at " .. ns.Money(e.price) .. " each" end
+        r.detail:SetText(string.format("%s  %s%s|r", what, MUTED, e.loc or ("x" .. (e.qty or 0))))
         r.profit:SetText(ns.Money(e.value or 0))
         if e.action ~= "ah" then r.search:Hide() end
     elseif currentTab == "mine" then
@@ -255,7 +263,7 @@ local function updateRow(r, e)
             r.profit:SetText("")
         end
     else -- crafts
-        r.detail:SetText(string.format("%scost %s|r  sells %s", MUTED, ns.Money(e.cost), ns.Money(e.value)))
+        r.detail:SetText(string.format("mats %s  %ssells for %s|r", ns.Money(e.cost), MUTED, ns.Money(e.value)))
         local p = e.profit or 0
         r.profit:SetText((p >= 0 and GREEN .. "+" or RED) .. ns.Money(p) .. "|r")
     end
@@ -287,6 +295,7 @@ function ns.RefreshPanel()
     local data = list()
     offset = math.max(0, math.min(offset, #data - ROWS))
     for i = 1, ROWS do updateRow(rows[i], data[i + offset]) end
+    panel.hint:SetText(TAB_HINT[currentTab] or "")
     for key, tab in pairs(tabs) do
         local n = key == "mine" and #ns.Positions() or #((targets() or {})[key] or {})
         tab:SetText(tab.label .. " " .. n)
@@ -347,7 +356,7 @@ local function build()
     panel.scan:SetPoint("TOPRIGHT", -30, -14)
     panel.scan:SetScript("OnClick", function() ns.StartScan() end)
 
-    local tabDefs = { { "buys", "Buy" }, { "sells", "Items" }, { "crafts", "Craft" }, { "mine", "Mine" } }
+    local tabDefs = { { "buys", "Buy" }, { "sells", "Sell" }, { "crafts", "Craft" }, { "mine", "My flips" } }
     local prev
     for _, def in ipairs(tabDefs) do
         local b = makeButton(panel, def[2], 92)
@@ -361,8 +370,14 @@ local function build()
         prev = b
     end
 
+    panel.hint = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    panel.hint:SetPoint("TOPLEFT", 14, -86)
+    panel.hint:SetWidth(PANEL_W - 28)
+    panel.hint:SetJustifyH("LEFT")
+    panel.hint:SetTextColor(0.75, 0.73, 0.68)
+
     panel.list = CreateFrame("Frame", nil, panel)
-    panel.list:SetPoint("TOPLEFT", 14, -90)
+    panel.list:SetPoint("TOPLEFT", 14, -114)
     panel.list:SetSize(PANEL_W - 28, ROWS * ROW_H)
     panel.list:EnableMouseWheel(true)
     panel.list:SetScript("OnMouseWheel", function(_, delta)
@@ -381,8 +396,7 @@ local function build()
     panel.footer:SetPoint("BOTTOMLEFT", 14, 12)
     panel.footer:SetWidth(PANEL_W - 28)
     panel.footer:SetJustifyH("LEFT")
-    panel.footer:SetText("Buy checks the live price and only offers Confirm at or under the max. Purchases are tracked in Mine; "
-        .. "you'll get an alert when one is worth selling. Drag to move, /myfa dock to snap back.")
+    panel.footer:SetText("Drag to move  ·  /myfa dock to snap back  ·  /myfa help for commands")
 
     panel:SetScript("OnShow", function()
         panel.ticker = C_Timer.NewTicker(1, ns.RefreshHeader)
@@ -408,33 +422,92 @@ local function rect(f)
     return l * k, r * k, t * k, b * k
 end
 
+local AH_WORDS = { "auction", "aux", "market", "broker", "tsm", "ahframe" }
+
+local function bigVisible(f, screenW)
+    if f == panel or (f.IsForbidden and f:IsForbidden()) or not f:IsVisible() then return nil end
+    if f.GetEffectiveAlpha and (f:GetEffectiveAlpha() or 1) < 0.05 then return nil end
+    local l, r, t, b = rect(f)
+    if not l then return nil end
+    local w, h = r - l, t - b
+    if w < 280 or h < 250 or w > screenW * 0.85 then return nil end
+    return l, r, t, b
+end
+
+-- every frame that could be an auction window: UIParent's children, plus whatever lives inside
+-- Blizzard's AuctionHouseFrame (some addons put their own window in there, bigger than Blizzard's)
+local function candidates()
+    local list, seen = {}, {}
+    local function add(f) if f and not seen[f] then seen[f] = true; list[#list + 1] = f end end
+    local function kids(f)
+        local ok, t = pcall(function() return { f:GetChildren() } end)
+        return ok and t or {}
+    end
+    for _, k in ipairs(kids(UIParent)) do add(k) end
+    if AuctionHouseFrame then
+        add(AuctionHouseFrame)
+        for _, k in ipairs(kids(AuctionHouseFrame)) do
+            add(k)
+            for _, g in ipairs(kids(k)) do add(g) end
+        end
+    end
+    return list
+end
+
 local function ahWindows()
-    local base = AuctionHouseFrame
-    local bl, br, bt, bb = nil, nil, nil, nil
-    if base and base:IsShown() then bl, br, bt, bb = rect(base) end
-    local found = {}
-    if bl then found[#found + 1] = { bl, br, bt, bb } end
     local screenW = UIParent:GetWidth() or 1920
-    local ok, kids = pcall(function() return { UIParent:GetChildren() } end)
-    for _, kid in ipairs(ok and kids or {}) do
+    local base = AuctionHouseFrame
+    local bl, br, bt, bb
+    if base then
+        local ok, l, r, t, b = pcall(bigVisible, base, screenW)
+        if ok and l then bl, br, bt, bb = l, r, t, b end
+    end
+    local learned = MyFA_DB.ui.ahFrames or {}
+    local found = {}
+    for _, f in ipairs(candidates()) do
         pcall(function()
-            if kid == panel or (kid.IsForbidden and kid:IsForbidden()) or not kid:IsVisible() then return end
-            local l, r, t, b = rect(kid)
+            local l, r, t, b = bigVisible(f, screenW)
             if not l then return end
-            local w, h = r - l, t - b
-            if w < 280 or h < 280 or w > screenW * 0.85 then return end
-            if bl then
-                -- must overlap or touch the Blizzard window
-                if l > br + 40 or r < bl - 40 or b > bt or t < bb then return end
-            else
-                -- no Blizzard window: only frames that look like an auction window
-                local name = (kid.GetName and kid:GetName() or ""):lower()
-                if not (name:find("auction") or name:find("aux") or name:find("market") or name:find("broker")) then return end
+            local name = (f.GetName and f:GetName() or "")
+            local lname = name:lower()
+            local looksLikeAH = false
+            for _, w in ipairs(AH_WORDS) do if lname:find(w, 1, true) then looksLikeAH = true end end
+            local insideAH = false
+            local parent = f.GetParent and f:GetParent()
+            while parent do
+                if parent == base then insideAH = true; break end
+                parent = parent.GetParent and parent:GetParent()
             end
-            found[#found + 1] = { l, r, t, b }
+            local overlaps = bl and not (l > br + 40 or r < bl - 40 or b > bt or t < bb)
+            if f == base or insideAH or learned[name] or overlaps or (not bl and looksLikeAH) then
+                found[#found + 1] = { l, r, t, b, f }
+            end
         end)
     end
     return found
+end
+
+-- learn which windows belong to the Auction House: the big ones that close when it closes
+local openSnapshot
+local function snapshotOpen()
+    local screenW = UIParent:GetWidth() or 1920
+    openSnapshot = {}
+    for _, f in ipairs(candidates()) do
+        local ok, l = pcall(bigVisible, f, screenW)
+        if ok and l then openSnapshot[#openSnapshot + 1] = f end
+    end
+end
+local function learnOnClose()
+    if not openSnapshot then return end
+    MyFA_DB.ui.ahFrames = MyFA_DB.ui.ahFrames or {}
+    for _, f in ipairs(openSnapshot) do
+        local ok, visible = pcall(function() return f:IsVisible() end)
+        local name = f.GetName and f:GetName()
+        if ok and not visible and name and name ~= "" and f ~= panel then
+            MyFA_DB.ui.ahFrames[name] = true
+        end
+    end
+    openSnapshot = nil
 end
 
 local function dock()
@@ -476,7 +549,8 @@ local function attachToAH()
     panel:Show()
     -- other auction addons often open their window a moment later: dock again
     C_Timer.After(0.2, dock)
-    C_Timer.After(0.8, dock)
+    C_Timer.After(0.8, function() dock(); snapshotOpen() end)
+    C_Timer.After(2.0, dock)
 end
 
 -- events ---------------------------------------------------------------------
@@ -494,6 +568,7 @@ ev:SetScript("OnEvent", function(_, event, a1, a2)
     elseif event == "AUCTION_HOUSE_CLOSED" then
         if pending then cancelPending(true) end
         if panel then panel:Hide() end
+        C_Timer.After(0.3, learnOnClose)
     else
         onCommodityEvent(event, a1, a2)
     end

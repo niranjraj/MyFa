@@ -2,7 +2,7 @@
 
 Two parts that pass data through files, the same way TradeSkillMaster's desktop app does:
 
-- **MyFA** (in-game addon) runs a full Auction House scan and records your **bags, bank** (and warband bank if Forever has one), gold, the recipes you know in **every profession**, and vendor prices you see. It also shows a **Buy / Items / Craft** panel beside the Auction House, with Search and Buy buttons and price lines in item tooltips.
+- **MyFA** (in-game addon) runs a full Auction House scan and records your **bags, bank** (and warband bank if Forever has one), gold, the recipes you know in **every profession**, and vendor prices you see. It also shows a **Buy / Sell / Craft / My flips** panel beside the Auction House, with Search and Buy buttons and price lines in item tooltips.
 - **MyFA Desk** (desktop app) watches the scan data. Each time you `/reload` it updates its price history, finds flips, vendor flips and craft margins, works out the best use of everything you own, charts price history, writes the targets back into the addon, and refreshes `report.html`.
 
 Nothing is automated. Every purchase is your click, and WoW itself requires that.
@@ -31,13 +31,26 @@ Prefer a terminal? `run_desk.bat` still works the same as before.
 
 `/myfa` toggles the panel, `/myfa scan` scans, and `/myfa status` shows data age.
 
+## The in-game panel
+
+The line under the tabs explains each one. The right-hand number means something different on each tab.
+
+| Tab | What it shows | The right-hand number |
+|---|---|---|
+| **Buy** | Cheap listings worth buying to resell, vendor flips and raid stock-ups. Each row says how many to buy and the most to pay each. **Search** jumps the Auction House to the item. **Buy** checks the live price, then **Confirm** buys. | Your profit after reselling, with the cut taken off |
+| **Sell** | Everything you own on all characters, with the best thing to do: post (at a price, each), sell to a vendor, craft into something, or keep for raid week or a rising price. Where it is shows on the right of each row. | What the whole stack is worth that way |
+| **Craft** | Recipes you know that make a profit, with mat cost and sale price. | Profit per craft |
+| **My flips** | What you bought and still hold, with what you paid and whether to sell yet. | Profit if you sold now |
+
+Items with fewer than 10 listed (often recipes and patterns) are thin markets. They can look very profitable but may take weeks to sell, so they stay off the Buy tab and show as high-risk snipes at the bottom of Desk's Flips tab. Set `"include_snipes": true` in `config.json` to see them in game too.
+
 ## Flip tracking and sell alerts
 
 - **Automatic tracking:** every Auction House purchase is recorded, whether you buy through the MyFA panel, the Blizzard window or another addon. For something you bought before installing MyFA, shift-click it into `/myfa bought [item] qty price`, for example `/myfa bought [Golden Sansam] 20 14s50c`.
 - **Alerts:** when the lowest listing clears your profit target, you get a raid-warning message, a sound and a chat line naming the character and bag, bank or mailbox that holds it. The default target is 15% after the cut; change it with `/myfa roi 20`. Checks run after every scan, when you open the Auction House and when you log in. Repeats come at most every 12 hours, or sooner if the price climbs another 10%.
 - **Desk:** prints the same alert and shows a Windows notification. Turn that off with `"desktop_notifications": false`.
 - **Raid items:** if the item is also a raid consumable, the alert says so, because launch week usually pays more and you may want to hold.
-- **Where to see them:** the **Mine** tab in game and **My flips** in Desk list what you paid, the price now, the alert price, the profit now and a note.
+- **Where to see them:** the **My flips** tab in game and **My flips** in Desk list what you paid, the price now, the alert price, the profit now and a note.
 - **Stop tracking** an item with `/myfa forget [item]`. Turn alerts off with `/myfa alerts off`.
 
 ## Multiple characters
