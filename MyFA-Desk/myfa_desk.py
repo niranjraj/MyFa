@@ -39,6 +39,8 @@ DEFAULTS = {
     "min_profit": 5000,          # copper per flip target (5000 = 50s)
     "min_roi": 0.15,             # at least 15% return after the cut
     "min_vendor_profit": 100,    # copper (1s)
+    "min_sold_per_day": 1.0,     # flips only for items that sell at least this many a day on that Auction House
+    "max_days_to_sell": 3,       # buy no more than the market takes in this many days
     "flip_threshold": 0.7,       # no longer used for flips (they relist where you'd be the cheapest seller); kept for old configs
     "max_supply_share": 0.35,    # never buy more than 35% of everything listed for an item
     "max_spend_fraction": 0.3,   # never spend more than 30% of your gold on one item

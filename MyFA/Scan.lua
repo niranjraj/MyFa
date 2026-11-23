@@ -76,7 +76,92 @@ local function summarize(listings)
     }
 end
 
-local function finish(realmKey, byItem, auctions, others)
+-- Sales tracking, the way market trackers do it: compare each listing with the previous scan.
+-- A listing that's gone although its time-left band says it couldn't have run out yet was bought
+-- (unless the same seller relisted the same stack, which is a repost). One that could have run out
+-- may have expired: counted fully only at the high end of the estimate.
+local BAND_MIN = { [0] = 0, [1] = 1800, [2] = 7200, [3] = 43200 }   -- Short, Medium, Long, Very long
+local MAX_GAP = 12 * 3600     -- 12h+ apart, any listing could have run out, so nothing proves a sale
+local SALES_DAYS = 14
+
+local function packSigs(sigs)
+    local out = {}
+    for itemID, set in pairs(sigs) do
+        local parts = {}
+        for sig, e in pairs(set) do parts[#parts + 1] = sig .. "=" .. e[1] .. "=" .. (e[2] or -1) end
+        out[itemID] = table.concat(parts, ";")
+    end
+    return out
+end
+
+local function unpackSigs(str)
+    local set = {}
+    for sig, n, b in string.gmatch(str or "", "([^;=]+)=(%d+)=(%-?%d+)") do
+        set[sig] = { tonumber(n), tonumber(b) }
+    end
+    return set
+end
+
+local function trackSales(realm, sigs, now)
+    local prev, prevT = realm.prev, realm.prevT
+    realm.prev, realm.prevT = packSigs(sigs), now
+    if not prev or not prevT then return end
+    local gap = now - prevT
+    if gap <= 0 or gap > MAX_GAP then return end
+    realm.lastGap = gap
+    local today = ns.Today()
+    realm.sd = realm.sd or {}
+    realm.obs = realm.obs or {}
+    realm.obs[today] = (realm.obs[today] or 0) + gap / 3600
+    for itemID, packed in pairs(prev) do
+        local before = unpackSigs(packed)
+        local after = sigs[itemID] or {}
+        -- new stacks per seller and size, to spot reposts
+        local fresh = {}
+        for sig, e in pairs(after) do
+            local was = before[sig] and before[sig][1] or 0
+            if e[1] > was then
+                local owner, count = sig:match("^(.-):(%d+):")
+                local key = (owner or "?") .. ":" .. (count or "0")
+                fresh[key] = (fresh[key] or 0) + (e[1] - was)
+            end
+        end
+        local early, maybe, value = 0, 0, 0
+        for sig, e in pairs(before) do
+            local gone = e[1] - (after[sig] and after[sig][1] or 0)
+            if gone > 0 then
+                local owner, count, buyout = sig:match("^(.-):(%d+):(%d+)$")
+                count, buyout = tonumber(count) or 1, tonumber(buyout) or 0
+                local key = (owner or "?") .. ":" .. count
+                for _ = 1, gone do
+                    if (fresh[key] or 0) > 0 then
+                        fresh[key] = fresh[key] - 1            -- reposted at another price: not a sale
+                    elseif e[2] and e[2] >= 0 and gap < (BAND_MIN[e[2]] or 0) then
+                        early = early + count                  -- couldn't have expired: bought
+                        value = value + buyout
+                    else
+                        maybe = maybe + count
+                    end
+                end
+            end
+        end
+        if early > 0 or maybe > 0 then
+            local d = realm.sd[itemID]
+            if not d then d = {}; realm.sd[itemID] = d end
+            local r = d[today]
+            if not r then r = { 0, 0, 0 }; d[today] = r end
+            r[1], r[2], r[3] = r[1] + early, r[2] + maybe, r[3] + value
+        end
+    end
+    local cutoff = today - SALES_DAYS
+    for itemID, d in pairs(realm.sd) do
+        for day in pairs(d) do if day < cutoff then d[day] = nil end end
+        if next(d) == nil then realm.sd[itemID] = nil end
+    end
+    for day in pairs(realm.obs) do if day < cutoff then realm.obs[day] = nil end end
+end
+
+local function finish(realmKey, byItem, auctions, others, sigs)
     local realm = MyFA_DB.realms[realmKey] or { h = {} }
     MyFA_DB.realms[realmKey] = realm
     realm.h = realm.h or {}
@@ -105,6 +190,8 @@ local function finish(realmKey, byItem, auctions, others)
 
     realm.items = items
     realm.neutral = ns.AtNeutralAH() or nil
+    local gapBefore = realm.prevT and (time() - realm.prevT) or nil
+    if sigs then trackSales(realm, sigs, time()) end
     realm.lastScan = time()
     realm.auctions = auctions
     realm.itemCount = count
@@ -113,6 +200,11 @@ local function finish(realmKey, byItem, auctions, others)
     ns.scannedThisSession = true
     ns.Print(string.format("%sscan done: %d auctions, %d items. Next: type /reload so MyFA Desk can read it.",
         ns.AtNeutralAH() and "neutral Auction House " or "", auctions, count))
+    if gapBefore and gapBefore <= 12 * 3600 then
+        ns.Print(string.format("|cff6fd08asales measured|r over the %s since your last scan here.", ns.Duration(gapBefore)))
+    else
+        ns.Print("|cffa9a59atip: scan here again in 20 minutes to a few hours (under 12): comparing two scans shows what actually sells, which is what flips are judged on.|r")
+    end
     refresh()
     if ns.RefreshPanel then ns.RefreshPanel() end
     if ns.CheckFlips then ns.CheckFlips() end
@@ -129,8 +221,9 @@ local function read()
     end
     local myToken = token
     local realmKey = ns.MarketKey()  -- your faction's Auction House, or the neutral one
-    local byItem, others = {}, {}
+    local byItem, others, sigs = {}, {}, {}
     local mine = ns.MyNames()
+    local timeLeft = AH.GetReplicateItemTimeLeft
     local index, used = 0, 0
     scan.phase, scan.total, scan.done = "reading", total, 0
     refresh()
@@ -147,6 +240,17 @@ local function read()
                 list[#list + 1] = { unit, count }
                 -- cheapest listing that isn't yours, for the undercut check
                 if not (owner and mine[owner]) and (not others[itemID] or unit < others[itemID]) then others[itemID] = unit end
+                -- this listing's identity and time-left band, to tell sold from expired next scan
+                local band = -1
+                if timeLeft then
+                    local ok, b = pcall(timeLeft, i)
+                    if ok and type(b) == "number" then band = b end
+                end
+                local set = sigs[itemID]
+                if not set then set = {}; sigs[itemID] = set end
+                local sig = string.gsub(owner or "?", "[:;=]", "") .. ":" .. count .. ":" .. buyout
+                local e = set[sig]
+                if e then e[1] = e[1] + 1; if band < e[2] then e[2] = band end else set[sig] = { 1, band } end
                 used = used + 1
             end
         end
@@ -156,7 +260,7 @@ local function read()
             refresh()
             C_Timer.After(0, step)
         else
-            finish(realmKey, byItem, used, others)
+            finish(realmKey, byItem, used, others, sigs)
         end
     end
     step()

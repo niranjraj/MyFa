@@ -163,6 +163,8 @@ Market value is set by where the bulk of supply sits, not by the cheapest listin
 | `history_days` | 14 | Days of prices that set market value. |
 | `chart_days` | 60 | Days of history kept in the Trends charts. |
 | `hold_rising_slope` | 0.04 | Suggest holding an item instead of selling once it's rising this fast per day. |
+| `min_sold_per_day` | 1.0 | Flips only for items that sell at least this many a day on that Auction House. |
+| `max_days_to_sell` | 3 | Buy no more than the market takes in this many days. |
 | `neutral_cut` | 0.15 | Cut taken by the neutral Auction Houses. |
 | `neutral_deposit_mult` | 5 | Neutral deposits compared with your faction's, until MyFA learns them from your posts. |
 | `deposit_rate` | 0.20 | Deposit as a share of vendor price until MyFA sees you post (the classic 8-hour rule). |

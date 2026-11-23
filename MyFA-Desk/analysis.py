@@ -43,6 +43,9 @@ class History:
                 mkt INTEGER, qty INTEGER, PRIMARY KEY (realm, item, ts));
             CREATE TABLE IF NOT EXISTS daymins (realm TEXT, item INTEGER, day INTEGER, min INTEGER,
                 PRIMARY KEY (realm, item, day));
+            CREATE TABLE IF NOT EXISTS sold (realm TEXT, item INTEGER, day INTEGER, early INTEGER, maybe INTEGER,
+                value INTEGER, PRIMARY KEY (realm, item, day));
+            CREATE TABLE IF NOT EXISTS observed (realm TEXT, day INTEGER, hours REAL, PRIMARY KEY (realm, day));
             """
         )
 
@@ -66,8 +69,34 @@ class History:
             "INSERT INTO daymins VALUES (?,?,?,?) ON CONFLICT(realm,item,day) DO UPDATE SET min=MIN(min, excluded.min)",
             rows,
         )
+        # sales the addon worked out by comparing scans (it keeps 14 days; Desk keeps them longer)
+        sold = []
+        for item, days in (realm.get("sd") or {}).items():
+            for day, r in (days.items() if isinstance(days, dict) else enumerate(days, 1)):
+                if isinstance(r, list) and len(r) >= 3:
+                    sold.append((realm_key, int(item), int(day), int(r[0]), int(r[1]), int(r[2])))
+        self.db.executemany("INSERT OR REPLACE INTO sold VALUES (?,?,?,?,?,?)", sold)
+        obs = realm.get("obs") or {}
+        self.db.executemany("INSERT OR REPLACE INTO observed VALUES (?,?,?)",
+                            [(realm_key, int(d), float(h)) for d, h in (obs.items() if isinstance(obs, dict) else enumerate(obs, 1))])
         self.db.commit()
         return new
+
+    def sales(self, realm_key, since_day):
+        """(hours watched, {item: {"early", "maybe", "value", "days": {day: (early, value)}}}) since since_day."""
+        hours = self.db.execute("SELECT COALESCE(SUM(hours), 0) FROM observed WHERE realm=? AND day>=?",
+                                (realm_key, since_day)).fetchone()[0]
+        out = {}
+        for item, day, e, m, v in self.db.execute(
+                "SELECT item, day, early, maybe, value FROM sold WHERE realm=? AND day>=?", (realm_key, since_day)):
+            r = out.setdefault(item, {"early": 0, "maybe": 0, "value": 0, "days": {}})
+            r["early"] += e
+            r["maybe"] += m
+            r["value"] += v
+            r["days"][day] = (e, v)
+        days_watched = self.db.execute("SELECT COUNT(*) FROM observed WHERE realm=? AND day>=? AND hours>0",
+                                       (realm_key, since_day)).fetchone()[0]
+        return float(hours or 0), int(days_watched or 0), out
 
     def series(self, realm_key, since_day):
         """{item: [[day, lowest, market, listed], ...]} one point per day, oldest first.
@@ -127,6 +156,48 @@ def _wall(ladder, total, share=0.2):
         if cum >= need:
             return price
     return ladder[-1][0] if ladder else None
+
+
+def sales_model(history, realm_key, today, window=7):
+    """How fast each item really sells on one Auction House, from listings that vanished between your scans.
+
+    Per item: lo / mid / hi units sold a day (mid counts one in ten of the listings that may just have expired,
+    hi counts them all), the usual sale price (median of each day's average sale price), a confidence and a label.
+    """
+    hours, days_watched, raw = history.sales(realm_key, today - window + 1)
+    model = {"hours": hours, "days": days_watched, "items": {}}
+    if hours < 1:
+        return model
+    for i, r in raw.items():
+        e, m = r["early"], r["maybe"]
+        lo = max(0.0, e - math.sqrt(e)) / hours * 24
+        mid = (e + 0.1 * m) / hours * 24
+        hi = (e + m + math.sqrt(e + m)) / hours * 24
+        daily = {d: v / n for d, (n, v) in r["days"].items() if n > 0}
+        prices = sorted(daily.values())
+        usual = statistics.median(prices) if prices else None
+        slope = None
+        if len(daily) >= 4:   # how real sale prices moved over the week (log-linear, per day)
+            xs = sorted(daily)
+            ys = [math.log(daily[d]) for d in xs]
+            mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+            den = sum((x - mx) ** 2 for x in xs)
+            if den:
+                slope = math.exp(sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den) - 1
+        conf = ("high" if hours >= 24 and e >= 20 else "medium" if hours >= 6 and e >= 5 else "low")
+        model["items"][int(i)] = {"lo": lo, "mid": mid, "hi": hi, "usual": usual, "usual_days": len(prices),
+                                  "conf": conf, "sold": e, "slope": slope}
+    return model
+
+
+def rate_txt(x):
+    return f"{x:.0f}" if x >= 10 else f"{x:.1f}"
+
+
+def sells_label(mid):
+    if mid is None:
+        return "Not measured"
+    return "Sells steadily" if mid >= 5 else ("Sells slowly" if mid >= 1 else "Rarely sells")
 
 
 def plan_flip(ladder, cut, risk_u, min_roi, typical=None, cap=None):
@@ -207,6 +278,18 @@ def analyse(sv, history: History, cfg, now=None):
     today = now // DAY
     series = history.series(realm_key, today - int(cfg["chart_days"]))
     trends = {i: trend(p) for i, p in series.items()}
+    smodel = sales_model(history, realm_key, today)
+
+    def sales_of(i, model=None):
+        """This item's sales on a market, or a 'measured zero' when the market was watched and it never sold."""
+        model = model or smodel
+        st = model["items"].get(int(i))
+        if st:
+            return st
+        if model["hours"] >= 6:
+            return {"lo": 0.0, "mid": 0.0, "hi": 0.0, "usual": None, "usual_days": 0, "conf": "medium" if model["hours"] >= 24 else "low",
+                    "sold": 0, "slope": None}
+        return None
 
     def band(i):
         """Typical price range from daily lowest prices: buy under the 20th percentile, sell at the 80th."""
@@ -275,6 +358,11 @@ def analyse(sv, history: History, cfg, now=None):
 
     # ---- flips ---------------------------------------------------------------
     flips = []
+    # Flips, the way market trackers judge them: only items that demonstrably sell, priced at their usual
+    # sale price, bought in a quantity the market takes within a few days, ranked by expected gold a day.
+    skips = {"rarely": [], "surge": [], "falling": [], "unmeasured": [], "slow": []}
+    min_sold = float(cfg.get("min_sold_per_day", 1.0))
+    max_days = float(cfg.get("max_days_to_sell", 3))
     for i, s in scan.items():
         m = meta.get(i) or {}
         if m.get("e") and not cfg["include_gear"]:
@@ -283,44 +371,101 @@ def analyse(sv, history: History, cfg, now=None):
         total = s.get("q") or 0
         if len(ladder) < 2 or total < 2:
             continue
+        st = sales_of(i)
         low, low_days = typical_low(i)
-        cap = max(1, int(total * float(cfg["max_supply_share"])))
+        # the usual sale price: real sales when we have two days of them, else the usual daily low, else the newest scan less 15%
+        if st and st["usual"] and st["usual_days"] >= 2:
+            usual, basis = min(st["usual"], low * 1.5) if low_days >= 3 else st["usual"], "sales"
+        elif low_days >= 3:
+            usual, basis = low, "daily lows"
+        else:
+            usual, basis = ladder[1][0] * 0.85, "this scan, less 15%"
+        if usual <= (m.get("v") or 0):
+            continue   # a vendor pays as much: not a flip (cheap ones show as vendor flips)
+        cheap = ladder[0][0] < usual * 0.8   # only worth explaining a skip if something looks cheap
+        # supply surge: far more listed than usual, so the price is about to slide (a poison glut, say)
+        qtys = [p_[3] for p_ in series.get(i, []) if p_[3] and p_[0] >= today - 7]
+        usual_qty = statistics.median(qtys[:-1]) if len(qtys) >= 3 else None
+        if usual_qty and usual_qty >= 5 and total > 2 * usual_qty:
+            if cheap:
+                skips["surge"].append(name(i))
+            continue
+        # falling: real sale prices when MyFA has four days of them, else the listing trend
+        slope = st.get("slope") if st else None
+        if slope is None:
+            t = trends.get(i)
+            slope = t["slope"] if t else None
+        if slope is not None and slope < -0.03:
+            if cheap:
+                skips["falling"].append(name(i))
+            continue
+        if st is None:
+            # not measured yet: only deep, steady markets, and small
+            if total < 200 or low_days < 5:
+                if cheap:
+                    skips["unmeasured"].append(name(i))
+                continue
+            per_day = None
+            cap_sales = max(1, int(total * 0.05))
+        else:
+            if st["mid"] < min_sold:
+                if cheap:
+                    skips["rarely"].append(name(i))
+                continue
+            per_day = st["lo"] if st["lo"] > 0 else st["mid"] / 2
+            cap_sales = max(1, int(per_day * max_days))
+        # how much to buy: what the market takes in max_days_to_sell once sales are measured;
+        # before that, a small share of what's listed
+        cap = cap_sales if st is not None else min(max(1, int(total * float(cfg["max_supply_share"]))), cap_sales)
         if budget != float("inf") and ladder[0][0] > 0:
             cap = min(cap, int(budget // ladder[0][0]))
+        p_sell = riskm.rate(i)
+        # lost deposits: your usual rate, but never less than the 1 silver minimum per auction
         risk_u = riskm.per_unit(i, "home")
-        plan = plan_flip(ladder, cut, risk_u, float(cfg["min_roi"]), low if low_days >= 3 else None, cap)
+        plan = plan_flip(ladder, cut, risk_u, float(cfg["min_roi"]), usual, cap)
         if not plan:
             continue
         units, cost, avg = plan["units"], plan["cost"], plan["cost"] / plan["units"]
-        profit = int(plan["profit"])
+        min_dep = 100 * (1 - p_sell) / p_sell      # one auction's 1s minimum deposit, lost as often as listings fail
+        profit = int(plan["profit"] - min_dep)
         roi = (plan["net"] - avg) / avg if avg else 0
         if profit < cfg["min_profit"] or roi < cfg["min_roi"]:
             continue
+        days_to_sell = units / per_day if per_day else None
+        if days_to_sell and days_to_sell > max_days * 1.01:
+            skips["slow"].append(name(i))
+            continue
+        per_unit = profit / units
+        profit_day = per_unit * min(units, per_day) if per_day else None
         thin = total < int(cfg["min_listed"])
-        risk = "low" if low_days >= 7 and total >= 40 else ("medium" if low_days >= 3 else "high")
-        t = trends.get(i)
-        falling = t and t["slope"] is not None and t["slope"] < -0.05
-        if falling or thin:
+        conf = st["conf"] if st else "not measured"
+        risk = {"high": "low", "medium": "medium"}.get(conf, "high")
+        if thin:
             risk = "high"
-        if plan["capped_by_history"]:
-            where = (f"The next listing left would be {fmt(plan['next'])}, but it usually bottoms out around {fmt(low)}, "
-                     f"so relist at {fmt(plan['resale'])}.")
+        label = sells_label(st["mid"] if st else None)
+        if st:
+            speed = (f"{label}: about {rate_txt(st['mid'])} a day ({rate_txt(st['lo'])} to {rate_txt(st['hi'])}, {conf} confidence). ")
         else:
-            where = f"That leaves {fmt(plan['next'])} as the cheapest listing: relist at {fmt(plan['resale'])} and yours sell first."
-        if low_days < 3:
-            where += " Based on one scan only; scan daily so MyFA knows where it usually trades."
+            speed = "Sales not measured yet (scan twice, an hour apart, to measure them), so only a small amount. "
+        price_note = {"sales": "its usual sale price over the last 7 days",
+                      "daily lows": "where it usually bottoms out",
+                      "this scan, less 15%": "the next listing less 15% (no history yet)"}[basis]
         flips.append({
             "id": i, "name": name(i), "q": quality(i), "kind": "snipe" if thin else "flip",
             "max": int(plan["top"]), "qty": units, "avg": int(avg), "sell": plan["resale"],
             "profit": profit, "roi": round(roi, 3), "listed": total, "days": low_days, "risk": risk,
-            "why": (f"Thin market: only {total} listed, so it may take a long time to sell. Only for patience or your own use. "
-                    if thin else "") +
-                   f"Buy all {units} listed at up to {fmt(plan['top'])}. {where}"
-                   + (f" Falling about {-t['slope'] * 100:.0f}% a day." if falling else "")
-                   + f" {int(cut * 100)}% cut included." + riskm.note(i, "home", units),
-            "risk_unit": int(risk_u), "sell_rate": round(riskm.rate(i), 2),
+            "usual": int(usual), "usual_basis": basis, "sold_day": round(st["mid"], 1) if st else None,
+            "sold_lo": round(st["lo"], 1) if st else None, "sold_hi": round(st["hi"], 1) if st else None,
+            "sells": label, "conf": conf, "days_to_sell": round(days_to_sell, 1) if days_to_sell else None,
+            "profit_day": int(profit_day) if profit_day is not None else None,
+            "why": speed + f"Buy all {units} listed at up to {fmt(plan['top'])} and relist at {fmt(plan['resale'])}, "
+                   f"{price_note}; you'll be the cheapest seller."
+                   + ((" Sells within a day." if days_to_sell < 1 else f" About {days_to_sell:.1f} days to sell.") if days_to_sell else "")
+                   + f" {int(cut * 100)}% cut and likely lost deposits included.",
+            "risk_unit": int(risk_u), "sell_rate": round(p_sell, 2),
         })
-    flips.sort(key=lambda r: (r["kind"] == "snipe", -r["profit"]))
+    # best gold a day first; unmeasured ones after the measured ones
+    flips.sort(key=lambda r: (r["kind"] == "snipe", r["profit_day"] is None, -(r["profit_day"] or 0), -r["profit"]))
     flips = flips[: cfg["max_targets"]]
 
     # ---- vendor flips --------------------------------------------------------
@@ -702,6 +847,9 @@ def analyse(sv, history: History, cfg, now=None):
             # the band's high is where it bottoms out on good days: a realistic raid-week price, not a wish
             sell_ref = r["sell"] or int(r["market"] or r["now"])
             profit = int((sell_ref * (1 - cut) - r["now"] - riskm.per_unit(r["id"], "home")) * r["qty"])
+            rst = sales_of(r["id"])
+            if rst is not None and rst["mid"] < float(cfg.get("min_sold_per_day", 1.0)):
+                continue   # it doesn't sell here even now: raid week won't rescue that
             if profit > 0 and not any(f["id"] == r["id"] for f in flips):
                 flips.append({
                     "id": r["id"], "name": r["name"], "q": r["q"], "kind": "raid", "max": r["buy"] or r["now"],
@@ -875,8 +1023,9 @@ def analyse(sv, history: History, cfg, now=None):
     my_auctions.sort(key=lambda r: (order_a[r["status"]], -(r["u"] * r["qty"])))
 
     # ---- neutral Auction House: a separate market both factions share ---------------------------------
+    nmodel = sales_model(history, neutral_key, today)
     neutral = neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, typical_low, meta, name, quality,
-                             riskm, cut, budget, inventory, flips)
+                             riskm, cut, budget, inventory, flips, sales_of, lambda i: sales_of(i, nmodel), smodel, nmodel)
 
     # ---- realized profit from your sales -------------------------------------------------------------
     craft_unit_cost = {r["id"]: r["cost"] / max(r["n_out"], 1) for r in crafts if r["cost"] and not r["missing"]}
@@ -975,6 +1124,8 @@ def analyse(sv, history: History, cfg, now=None):
         "profiles": profiles, "next_moves": next_moves,
         "mail_seen": any(c.get("mailT") for c in chars),
         "neutral": neutral, "profit": profit, "my_auctions": my_auctions,
+        "flip_skips": skips, "sales_watch": {"hours": round(smodel["hours"], 1), "days": smodel["days"],
+                                             "items": len(smodel["items"])},
         "risk": {"p0": riskm.p0, "p0_basis": riskm.p0_basis, "dep_rate": riskm.dep_rate, "dep_learned": riskm.dep_learned,
                  "units": {i: int(riskm.per_unit(i, "home")) for i in {r["id"] for r in positions} | {r["id"] for r in flips}
                            if riskm.per_unit(i, "home") >= 1},
@@ -983,7 +1134,7 @@ def analyse(sv, history: History, cfg, now=None):
 
 
 def neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, typical_low, meta, name, quality, risk, cut,
-                   budget, inventory, flips):
+                   budget, inventory, flips, sales_home, sales_neutral, hmodel, nmodel):
     """Trades between your faction's Auction House and the neutral one (Gadgetzan, Booty Bay, Everlook).
 
     tohome:    cheap on the neutral AH, worth more at home (buy there, carry or mail it home, sell at home)
@@ -1029,19 +1180,39 @@ def neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, t
     def skip_gear(i):
         return (meta.get(i) or {}).get("e") and not cfg["include_gear"]
 
+    min_sold = float(cfg.get("min_sold_per_day", 1.0))
+    max_days = float(cfg.get("max_days_to_sell", 3))
+
+    def demand(st, model, ref_price):
+        """(resale price, units that house takes in max_days, note) or None when it doesn't sell there."""
+        if not st or st["mid"] < min_sold:
+            return None
+        price = st["usual"] if st["usual"] and st["usual_days"] >= 2 else ref_price
+        if not price:
+            return None
+        price = min(price, ref_price) if ref_price else price
+        haircut = model["days"] < 3
+        if haircut:
+            price *= 0.85   # under three days of history on the house you sell to: trust its prices less
+        per_day = st["lo"] if st["lo"] > 0 else st["mid"] / 2
+        note = (f" Sells about {rate_txt(st['mid'])} a day there ({st['conf']} confidence)."
+                + (" Resale cut 15%: under three days of history there." if haircut else ""))
+        return price, max(1, int(per_day * max_days)), per_day, note
+
     # buy on the neutral AH, sell at home
     for i, ns_ in nscan.items():
         hs = scan.get(i)
         if skip_gear(i) or not hs or (hs.get("q") or 0) < thin:
             continue
-        sell = home_ref(i)
-        if not sell:
+        d = demand(sales_home(i), hmodel, home_ref(i))
+        if not d:
             continue
-        per_unit = sell * (1 - cut) - risk.per_unit(i, "home")
+        sell, takes, per_day, dnote = d
+        per_unit = sell * (1 - cut) - risk.per_unit(i, "home") - 100 / max(1, takes)
         units, cost, top = _units_below(ns_.get("l") or [], per_unit / (1 + min_roi))
         if units <= 0:
             continue
-        cap = max(1, int((hs.get("q") or 0) * share))
+        cap = min(max(1, int((hs.get("q") or 0) * share)), takes)
         avg = cost / units
         if budget != float("inf") and avg > 0:
             cap = min(cap, int(budget // avg))
@@ -1058,7 +1229,8 @@ def neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, t
             "nlisted": ns_.get("q", 0),
             "why": (f"{units} on the neutral AH under {fmt(per_unit / (1 + min_roi))}; at home the cheapest is about "
                     f"{fmt(sell)}. Buy at the neutral AH, carry or mail it home and post at that price. "
-                    f"Your {int(cut * 100)}% cut included." + risk.note(i, "home", units) + age_note),
+                    f"Your {int(cut * 100)}% cut included." + dnote + risk.note(i, "home", units) + age_note),
+            "sold_day": round(sales_home(i)["mid"], 1), "profit_day": int((per_unit - avg) * min(units, per_day)),
         })
 
     # buy at home, sell on the neutral AH
@@ -1067,14 +1239,15 @@ def neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, t
         ns_ = nscan.get(i)
         if skip_gear(i) or not ns_ or (ns_.get("q") or 0) < thin:
             continue
-        sell = ref(ns_, nseries.get(i, []))
-        if not sell:
+        d = demand(sales_neutral(i), nmodel, ref(ns_, nseries.get(i, [])))
+        if not d:
             continue
-        per_unit = sell * (1 - ncut) - risk.per_unit(i, "neutral")
+        sell, takes, per_day, dnote = d
+        per_unit = sell * (1 - ncut) - risk.per_unit(i, "neutral") - 100 / max(1, takes)
         units, cost, top = _units_below(hs.get("l") or [], per_unit / (1 + min_roi))
         if units <= 0:
             continue
-        cap = max(1, int((ns_.get("q") or 0) * share))   # neutral markets are small: don't flood them
+        cap = min(max(1, int((ns_.get("q") or 0) * share)), takes)   # neutral markets are small: don't flood them
         avg = cost / units
         if budget != float("inf") and avg > 0:
             cap = min(cap, int(budget // avg))
@@ -1092,7 +1265,8 @@ def neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, t
             "why": (f"{units} here under {fmt(per_unit / (1 + min_roi))}; on the neutral AH the cheapest is about {fmt(sell)} "
                     f"({ns_.get('q', 0)} listed). Post at that price; after its {int(ncut * 100)}% cut that still pays. "
                     f"Take them to Gadgetzan, Booty Bay or Everlook, or mail them to a character parked there."
-                    + risk.note(i, "neutral", units) + age_note),
+                    + dnote + risk.note(i, "neutral", units) + age_note),
+            "sold_day": round(sales_neutral(i)["mid"], 1), "profit_day": int((per_unit - avg) * min(units, per_day)),
         })
 
     # things you own that pay more on the neutral AH
@@ -1101,10 +1275,11 @@ def neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, t
         ns_ = nscan.get(i)
         if not ns_ or (ns_.get("q") or 0) < thin or not r["qty"]:
             continue
-        sell = ref(ns_, nseries.get(i, []))
-        if not sell:
+        d = demand(sales_neutral(i), nmodel, ref(ns_, nseries.get(i, [])))
+        if not d:
             continue
-        post_at = max(int(ns_["m"]), int(sell * 0.95)) if ns_.get("m") else int(sell)
+        sell, takes, _, dnote = d
+        post_at = int(sell)
         per_unit = post_at * (1 - ncut) - risk.per_unit(i, "neutral")
         best = r["value"] / r["qty"]
         extra = (per_unit - best) * r["qty"]
@@ -1114,10 +1289,10 @@ def neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, t
             "id": i, "name": r["name"], "q": r["q"], "qty": r["qty"], "price": post_at, "value": int(per_unit * r["qty"]),
             "extra": int(extra), "home": int(best * r["qty"]), "loc": r["loc"], "nlisted": ns_.get("q", 0),
             "why": (f"Post at about {fmt(post_at)} on the neutral AH: {fmt(extra)} more than its best use at home, "
-                    f"after the {int(ncut * 100)}% cut." + risk.note(i, "neutral", r["qty"]) + age_note),
+                    f"after the {int(ncut * 100)}% cut." + dnote + risk.note(i, "neutral", r["qty"]) + age_note),
         })
     for key in ("tohome", "toneutral"):
-        out[key].sort(key=lambda r: -r["profit"])
+        out[key].sort(key=lambda r: -(r.get("profit_day") or 0))
         out[key] = out[key][: int(cfg["max_targets"])]
     out["sell"].sort(key=lambda r: -r["extra"])
     return out
@@ -1179,11 +1354,11 @@ def fmt(copper):
 
 def targets_table(result):
     """The data written to Data/Targets.lua for the addon."""
-    keys = ("id", "name", "kind", "max", "qty", "profit", "sell", "why")
+    keys = ("id", "name", "kind", "max", "qty", "profit", "sell", "why", "sold_day", "profit_day")
     cfg = result["cfg"]
     flips = [r for r in result["flips"] if r["kind"] != "snipe" or cfg.get("include_snipes")]
     toneutral = (result.get("neutral") or {}).get("toneutral") or []
-    buys = [{k: r[k] for k in keys} for r in result["vendor"] + flips + toneutral]
+    buys = [{k: r[k] for k in keys if r.get(k) is not None} for r in result["vendor"] + flips + toneutral]
     buys.sort(key=lambda r: r["profit"], reverse=True)
     sells = [{"id": r["id"], "name": r["name"], "price": r["price"], "qty": r["qty"], "action": r["action"],
               "value": r["value"], "loc": r["loc"], "into": r["into"], "hold": r["hold"], "why": r["note"] or None}
@@ -1208,10 +1383,10 @@ def neutral_targets(result):
     n = result.get("neutral") or {}
     if not n.get("scan_ts") or n.get("stale"):
         return None
-    keys = ("id", "name", "kind", "max", "qty", "profit", "sell", "why")
+    keys = ("id", "name", "kind", "max", "qty", "profit", "sell", "why", "sold_day", "profit_day")
     return {
         "scan": n["scan_ts"], "cut": n["cut"],
-        "buys": [{k: r[k] for k in keys} for r in n["tohome"]],
+        "buys": [{k: r[k] for k in keys if r.get(k) is not None} for r in n["tohome"]],
         "sells": [{"id": r["id"], "name": r["name"], "price": r["price"], "qty": r["qty"], "action": "ah",
                    "value": r["value"], "loc": r["loc"], "why": r["why"]} for r in n["sell"]],
     }

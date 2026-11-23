@@ -199,6 +199,13 @@ local function rowTooltip(self)
                       "3. Post them again at about " .. ns.Money(e.sell or 0) .. " each" .. (e.kind == "raid" and " in raid week." or "."),
                       "Expected profit after the cut: " .. ns.Money(e.profit or 0) .. "." }
         end
+        if e.sold_day then
+            steps[#steps + 1] = string.format("Sells about %s a day on this market%s.",
+                e.sold_day >= 10 and string.format("%d", e.sold_day) or string.format("%.1f", e.sold_day),
+                e.profit_day and (", so about " .. ns.Money(e.profit_day) .. " profit a day") or "")
+        elseif e.kind ~= "vendor" then
+            steps[#steps + 1] = "Sales not measured yet: scan twice, at least 20 minutes apart, so MyFA can see what sells."
+        end
     elseif currentTab == "sells" then
         if e.action == "ah" then
             local plan = e.plan or ns.PostPlan(e.id, e)
@@ -307,7 +314,8 @@ local function updateRow(r, e)
         local label = (e.kind == "vendor" and tag(GREEN, "VENDOR")) or (e.kind == "raid" and tag(BLUE, "RAID"))
             or (e.kind == "snipe" and tag(RED, "SNIPE")) or (e.kind == "toneutral" and tag(PURPLE, "TO NEUTRAL"))
             or (e.kind == "tohome" and tag(PURPLE, "TO " .. string.upper(UnitFactionGroup("player") or "HOME") .. " AH")) or tag(GOLDC, "FLIP")
-        r.detail:SetText(string.format("%sbuy x%d, max %s each", label, left, ns.Money(e.max)))
+        local speed = e.sold_day and string.format("  %s~%s/day|r", MUTED, e.sold_day >= 10 and string.format("%d", e.sold_day) or string.format("%.1f", e.sold_day)) or ""
+        r.detail:SetText(string.format("%sbuy x%d, max %s each%s", label, left, ns.Money(e.max), speed))
         r.profit:SetText(GREEN .. "+" .. ns.Money(e.profit or 0) .. "|r")
         if isCommodity(e.id) then
             r.buy:Show()

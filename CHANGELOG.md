@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.8.0
+- **Flips rebuilt around what actually sells.** Cheap listings alone don't make a flip; buyers do. Modelled on how market trackers like Booty Bay Broker judge deals.
+  - **Sold a day:** each scan now remembers every listing (seller, size, price, time left). The next scan counts which ones disappeared before they could have run out: those were bought. Reposts by the same seller aren't counted, and listings that may just have expired only count at the high end of the range.
+  - **Usual price:** the typical *sale* price over the last 7 days (from those sales), not the price of listings that may never sell.
+  - **A flip needs all of this:**
+    - it sells at least `min_sold_per_day` (1) a day;
+    - you buy no more than the market takes in `max_days_to_sell` (3) days;
+    - there's no supply flood (more than twice the usual amount listed, like a poison glut);
+    - its sale price isn't falling;
+    - it clears your profit and ROI after the cut, likely lost deposits and the 1s minimum deposit.
+  - Flips rank by **gold a day**: profit per unit times how many sell a day.
+  - The Flips tab shows sold a day (with its range), days to sell, gold a day and confidence, plus which cheap items were skipped and why.
+- **Neutral AH trades** use the same rules for the house you sell to, with its own sales numbers. Resale prices are cut 15% while that house has under three days of history.
+- **Raid buys** are skipped for items that don't sell on your market even now.
+- **In game:** Buy rows show how many sell a day. After each scan, chat says whether sales were measured, or reminds you to scan again 20 minutes to a few hours later.
+- **New settings:** `min_sold_per_day`, `max_days_to_sell`.
+
 ## 1.7.2
 - **Flips now relist at a price that sells.** Before, MyFA bought what was listed under 70% of a "market" price and told you to relist at that market price. Cheaper listings were still there, so yours didn't sell. Now:
   - MyFA works out which cheap listings to buy so that, afterwards, **you are the cheapest seller**.

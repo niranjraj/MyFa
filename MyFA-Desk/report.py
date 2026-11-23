@@ -574,15 +574,15 @@ def neutral_panel(result, it, sort_or):
             td(money(r["sell"]), r["sell"], "num"),
             td(money(r["profit"], True), r["profit"], "num pos"),
             td(f'{r["roi"] * 100:.0f}%', r["roi"], "num"),
-            td(f'{r["listed"]:,}', r["listed"], "num"),
-            td(f'{r["nlisted"]:,}', r["nlisted"], "num"),
+            td(f'{r["sold_day"]:.0f}' if r.get("sold_day", 0) >= 10 else f'{r.get("sold_day", 0):.1f}', r.get("sold_day", 0), "num"),
+            td(money(r["profit_day"], True) if r.get("profit_day") is not None else '<span class="na">n/a</span>', r.get("profit_day") or 0, "num strong"),
             td(esc(r["why"]), None, "why"),
         ] for r in rows]
 
     cols = lambda buy_at, sell_at: [  # noqa: E731
         ("Item", "s", ""), (f"Avg buy ({buy_at})", "n", "num"), ("Buy up to", "n", "num"), ("Qty", "n", "num"),
-        (f"Sell at ({sell_at})", "n", "num"), ("Profit", "n", "num"), ("ROI", "n", "num"), ("Listed at home", "n", "num"),
-        ("Listed neutral", "n", "num"), ("Why", "s", "why")]
+        (f"Sell at ({sell_at})", "n", "num"), ("Profit", "n", "num"), ("ROI", "n", "num"),
+        (f"Sold a day ({sell_at})", "n", "num"), ("Gold a day", "n", "num"), ("Why", "s", "why")]
     sell_rows = [[
         td(it(r), r["name"]),
         td(f'{r["qty"]:,}', r["qty"], "num"),
@@ -624,19 +624,54 @@ def build(result, advice=None, config_path=""):
     it = lambda r: item(r, chart_ids)  # noqa: E731
     sort_or = lambda x, d=-999: x if x is not None else d  # noqa: E731
 
+    CONF_CLS = {"high": "act-c", "medium": "risk-med", "low": "risk-high", "not measured": "risk-high"}
+    CONF_ORDER = {"high": 0, "medium": 1, "low": 2, "not measured": 3}
+
+    def rate(x):
+        return f"{x:.0f}" if x >= 10 else f"{x:.1f}"
+
+    def sold_cell(r):
+        if r.get("sold_day") is None:
+            return td('<span class="na">not measured</span>', -1, "num")
+        return td(f'{rate(r["sold_day"])}<span class="sub"> {rate(r["sold_lo"])}&ndash;{rate(r["sold_hi"])}</span>'
+                  if r.get("sold_lo") is not None else rate(r["sold_day"]), r["sold_day"], "num nowrap")
+
     flips_rows = [[
         td(it(r), r["name"]),
-        td(money(r["avg"]), r["avg"], "num"),
         td(money(r["max"]), r["max"], "num"),
         td(f'{r["qty"]:,}', r["qty"], "num"),
         td(money(r["sell"]), r["sell"], "num"),
+        sold_cell(r),
+        td(("under 1" if r["days_to_sell"] < 1 else f'{r["days_to_sell"]:.1f}') if r.get("days_to_sell") is not None
+           else '<span class="na">n/a</span>', r.get("days_to_sell") if r.get("days_to_sell") is not None else 99, "num"),
         td(money(r["profit"], True), r["profit"], "num pos"),
+        td(money(r["profit_day"], True) if r.get("profit_day") is not None else '<span class="na">n/a</span>',
+           r.get("profit_day") if r.get("profit_day") is not None else -1, "num strong"),
         td(f'{r["roi"] * 100:.0f}%', r["roi"], "num"),
-        td(f'{r["listed"]:,}', r["listed"], "num"),
-        td(f'<span class="{RISK[r["risk"]]}">{r["risk"]}</span>', ["none", "low", "medium", "high"].index(r["risk"])),
-        td(f'{r.get("sell_rate", 0) * 100:.0f}%', r.get("sell_rate", 0), "num"),
+        td(f'<span class="{CONF_CLS.get(r.get("conf"), "act-v")}">{esc(r.get("conf") or ("raid hold" if r["kind"] == "raid" else "n/a"))}</span>',
+           CONF_ORDER.get(r.get("conf"), 4)),
         td(esc(r["why"]), None, "why"),
     ] for r in result["flips"]]
+
+    sw = result.get("sales_watch") or {}
+    sk = result.get("flip_skips") or {}
+    if sw.get("hours", 0) < 1:
+        watch_html = ('<p class="fine watchnote"><b>Sales not measured yet.</b> MyFA works out what really sells by comparing two scans: '
+                      'press Full scan, wait at least 20 minutes (under 12 hours), and scan again. Until then flips are limited to '
+                      'deep, steady markets and small amounts.</p>')
+    else:
+        watch_html = (f'<p class="fine watchnote">Sales measured over {sw["hours"]:.0f} hours of your scans on {sw["days"]} '
+                      f'day{"s" if sw["days"] != 1 else ""} this week. More pairs of scans a day (20 minutes to a few hours apart) '
+                      'sharpen the numbers.</p>')
+    skip_bits = []
+    for key, text in (("rarely", "rarely sell"), ("surge", "have a sudden flood of supply (prices about to slide)"),
+                      ("falling", "are falling in price"), ("slow", "would take too long to sell"),
+                      ("unmeasured", "have no sales measured yet")):
+        names = sk.get(key) or []
+        if names:
+            shown = ", ".join(esc(n) for n in names[:4]) + (f" and {len(names) - 4} more" if len(names) > 4 else "")
+            skip_bits.append(f"{len(names)} {text} ({shown})")
+    skip_html = (f'<p class="fine watchnote">Looked cheap but skipped: {"; ".join(skip_bits)}.</p>' if skip_bits else "")
 
     vendor_rows = [[
         td(it(r), r["name"]),
@@ -824,19 +859,17 @@ def build(result, advice=None, config_path=""):
     panels.append(("neutral", "Neutral AH", n_count if nt.get("scan_ts") else None, neutral_panel(result, it, sort_or),
                    "Gadgetzan, Booty Bay and Everlook: a separate market both factions share. What's worth carrying between it and yours."))
     panels += [
-        ("flips", "Flips", len(result["flips"]), table("flips", [
-            ("Item", "s", ""), ("Avg buy", "n", "num"), ("Buy up to", "n", "num"), ("Qty", "n", "num"),
-            ("Relist at", "n", "num"), ("Profit", "n", "num"), ("ROI", "n", "num"), ("Listed", "n", "num"),
-            ("Risk", "n", ""), ("Sells", "n", "num"), ("Why", "s", "why")], flips_rows,
-            "No flips pass your filters right now. With fewer than 3 days of scans, flips come only from price gaps "
-            "inside one scan, so scan once a day. Lowering <code>min_profit</code> or <code>min_roi</code> "
-            "in config.json shows more."),
-         f"Buy the cheapest listings up to <em>Buy up to</em>, then relist at <em>Relist at</em>: the next listing left after you buy, "
-         f"so yours are the cheapest, and never above where the item usually bottoms out. Items with fewer than {cfg['min_listed']} listed are thin markets: "
-         f"they're marked high risk, listed last, and left off the in-game Buy list. Profit is after the {cut_pct} AH cut, "
-         f"capped at {int(cfg['max_supply_share'] * 100)}% of supply and {int(cfg['max_spend_fraction'] * 100)}% of your gold per item. "
-         "Falling items are marked high risk. <em>Sells</em> is the share of listings MyFA expects to sell, from your own sale mails "
-         "where it has them; profit already subtracts the deposits you'd lose relisting the rest."),
+        ("flips", "Flips", len(result["flips"]), watch_html + skip_html + table("flips", [
+            ("Item", "s", ""), ("Buy up to", "n", "num"), ("Qty", "n", "num"), ("Relist at", "n", "num"),
+            ("Sold a day", "n", "num"), ("Days to sell", "n", "num"), ("Profit", "n", "num"), ("Gold a day", "n", "num"),
+            ("ROI", "n", "num"), ("Confidence", "n", ""), ("Why", "s", "why")], flips_rows,
+            "No flips pass right now. That's often the right answer: buying what doesn't sell is how flips lose money."),
+         f"Only items that really sell. <em>Sold a day</em> comes from listings that vanished between your scans before they "
+         f"could have run out (the low to high range after it). <em>Relist at</em> is the usual sale price, or the next listing "
+         f"left after you buy if that's lower, so you're the cheapest seller. MyFA buys no more than the market takes in "
+         f"{cfg.get('max_days_to_sell', 3):g} days, skips items with a supply flood or a falling price, and ranks by "
+         f"<em>Gold a day</em>: profit per unit times how many sell a day. After the {cut_pct} cut and likely lost deposits, "
+         f"capped at {int(cfg['max_spend_fraction'] * 100)}% of your gold per item."),
         ("vendor", "Vendor flips", len(result["vendor"]), table("vendor", [
             ("Item", "s", ""), ("Avg buy", "n", "num"), ("Qty", "n", "num"), ("Vendor pays", "n", "num"),
             ("Profit", "n", "num"), ("ROI", "n", "num")], vendor_rows,
@@ -1210,6 +1243,7 @@ td.barcell {{ vertical-align: middle; }}
 .readylist li .sub {{ margin-left: 4px; }}
 .neutralstat {{ margin: 0 0 22px; }}
 .block.auctions {{ margin-bottom: 28px; }}
+.watchnote {{ margin: 0 0 10px; max-width: 980px; }}
 @media (max-width: 720px) {{ table.stmt .opt {{ display: none; }} table.stmt th[scope=row] .sub {{ display: none; }} }}
 footer {{ margin-top: 28px; color: var(--faint); font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 6px 24px; }}
 @media (prefers-reduced-motion: reduce) {{ * {{ transition: none !important; }} }}
