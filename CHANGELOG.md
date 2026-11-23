@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.8.1
+- **Check Booty Bay Broker deals** (Flips tab). Open their WoW Forever deals page for your realm and faction, press Ctrl+A then Ctrl+C, and paste it into Desk. You can paste more pages one after another. Desk runs your flip checks on every row, using their sales figures (sold a day and range, selling speed, supply surge) and their usual sale price:
+  - is there a gap between the lowest price and the next listing after you buy;
+  - does it sell often enough;
+  - is there a supply surge;
+  - does it clear your profit after the cut.
+  - Deals that pass become flips (marked *Booty Bay Broker*) and show on the in-game Buy list. The rest are listed with the reason they failed.
+  - If your own scan is newer than theirs, MyFA trusts yours, and a cheap listing that's already gone is marked as such.
+  - Pasted deals expire after 6 hours.
+  - MyFA never fetches their site: their terms forbid automated scraping.
+- **Partial buys:** if your gold or the market's daily sales only allow part of the cheapest listings, MyFA buys part of them. Days to sell then includes the cheaper ones left in front of yours.
+
 ## 1.8.0
 - **Flips rebuilt around what actually sells.** Cheap listings alone don't make a flip; buyers do. Modelled on how market trackers like Booty Bay Broker judge deals.
   - **Sold a day:** each scan now remembers every listing (seller, size, price, time left). The next scan counts which ones disappeared before they could have run out: those were bought. Reposts by the same seller aren't counted, and listings that may just have expired only count at the high end of the range.

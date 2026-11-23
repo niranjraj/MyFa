@@ -28,7 +28,8 @@ sys.path.insert(0, str(HERE))
 import myfa_desk as desk  # noqa: E402
 import updater  # noqa: E402
 import guide as guide_mod  # noqa: E402
-import analysis  # noqa: E402
+import analysis
+import bbb  # noqa: E402
 from analysis import History  # noqa: E402
 
 DEFAULT_PORT = 47800
@@ -281,6 +282,21 @@ class Desk:
         return errors
 
     # ---- flips added or removed from the dashboard --------------------------------------
+    def bbb_import(self, data):
+        text = data.get("text") or ""
+        parsed = bbb.parse(text)
+        if not parsed["rows"]:
+            return {"error": "No deals found in that text. On Booty Bay Broker's deals page press Ctrl+A, then Ctrl+C, and paste here."}
+        if self.result:
+            mine = self.result["realm"].rpartition("-")[2]
+            if parsed["faction"] and parsed["faction"] != mine:
+                return {"error": f"That page is for {parsed['faction']}, but your scans are {mine}. Pick {mine} on Booty Bay Broker and copy again."}
+        saved = bbb.save(parsed)
+        log(f"Pasted {len(parsed['rows'])} deals from Booty Bay Broker ({parsed['market'] or 'unknown market'}"
+            f"{', ' + parsed['faction'] if parsed['faction'] else ''}); {len(saved['rows'])} kept in total.")
+        self.reprocess.set()
+        return {"ok": True, "count": len(parsed["rows"]), "total": len(saved["rows"])}
+
     def add_flip(self, data):
         r = self.result
         if not r:
@@ -445,7 +461,7 @@ def make_handler(app: Desk):
             # only our own page can call these: custom header + matching Host block other sites and DNS rebinding
             if not self._ok_host() or self.headers.get("X-MyFA") != "1":
                 return self._send(403, '{"error":"forbidden"}')
-            length = min(int(self.headers.get("Content-Length") or 0), 65536)
+            length = min(int(self.headers.get("Content-Length") or 0), 1048576)
             try:
                 data = json.loads(self.rfile.read(length) or b"{}")
             except ValueError:
@@ -470,6 +486,13 @@ def make_handler(app: Desk):
                 return self._send(200, json.dumps(app.add_flip(data)))
             if route == "/api/forget":
                 return self._send(200, json.dumps(app.forget_flip(data)))
+            if route == "/api/bbb-import":
+                return self._send(200, json.dumps(app.bbb_import(data)))
+            if route == "/api/bbb-clear":
+                bbb.clear()
+                app.reprocess.set()
+                log("Cleared the pasted Booty Bay Broker deals.")
+                return self._send(200, '{"ok":true}')
             if route == "/api/guide-paste":
                 return self._send(200, json.dumps(app.guide_paste(data)))
             if route == "/api/guide":
@@ -983,6 +1006,30 @@ CONTROL_HTML = r"""
       out.textContent = 'Copy blocked by the browser: the request is in the box below, press Ctrl+C, then clear the box.';
     }
   };
+  const bForm = document.getElementById('bbb-form');
+  if (bForm) bForm.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const out = document.getElementById('bbb-msg');
+    const ta = document.getElementById('bbb-text');
+    out.textContent = 'Reading…'; out.style.color = '';
+    const r = await post('/api/bbb-import', { text: ta.value });
+    out.textContent = r.ok ? `Read ${r.count} deals (${r.total} kept). Checking them against your flip rules…` : (r.error || 'Couldn\'t read that.');
+    out.style.color = r.ok ? '#72d38e' : '#f08c79';
+    if (r.ok) {
+      ta.value = '';
+      // wait for Desk to rebuild the report with the checked deals, then show it
+      const before = (await (await fetch('/api/status', { cache: 'no-store' })).json()).report_ts;
+      for (let n = 0; n < 40; n++) {
+        await new Promise(res => setTimeout(res, 750));
+        const st = await (await fetch('/api/status', { cache: 'no-store' })).json();
+        if (st.report_ts && st.report_ts !== before) break;
+      }
+      try { localStorage.setItem('myfa-tab', 'tab-flips'); } catch (e) {}
+      location.reload();
+    }
+  };
+  const bClear = document.getElementById('bbb-clear');
+  if (bClear) bClear.onclick = async () => { await post('/api/bbb-clear'); setTimeout(() => location.reload(), 1500); };
   const gSave = document.getElementById('g-save');
   if (gSave) gSave.onclick = async () => {
     const out = document.getElementById('g-saved');

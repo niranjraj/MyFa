@@ -58,6 +58,26 @@ Items with fewer than 10 listed (often recipes and patterns) are thin markets. T
 - **Add flips by hand:** press **+ Add flip** on the My flips tab in game (or `/myfa add`), drop the item in or shift-click it, then enter quantity and price each. In MyFA Desk, use the **Add a flip** form on My flips. It suggests item names, and the flip reaches the game on your next /reload.
 - **Stop tracking** a flip with **Remove** on its row in Desk, or `/myfa forget [item]` in game. Turn alerts off with `/myfa alerts off`.
 
+## Booty Bay Broker deals
+
+[Booty Bay Broker](https://bootybaybroker.com/forever/deals) tracks WoW Forever prices hourly and estimates how many of each item sell a day. To check their deals with MyFA's flip rules:
+
+1. Open their WoW Forever deals page and pick your region, realm and faction.
+2. Press **Ctrl+A**, then **Ctrl+C**.
+3. In Desk's **Flips** tab, paste into **Check Booty Bay Broker deals** and press **Check deals**. Paste more pages the same way.
+
+What MyFA does with them:
+- **Checks every deal:**
+  - is there a gap to the next listing (you must be the cheapest seller after buying);
+  - does it sell at least `min_sold_per_day` a day by their estimate;
+  - is there a supply surge;
+  - does it clear your profit after the cut.
+- Deals that pass join your flips and the in-game Buy list. The summary line says why the others failed.
+- If your own scan is newer than theirs, your scan wins.
+- Pasted deals expire after 6 hours.
+
+MyFA never fetches their site itself: their terms forbid automated scraping, so this is always a copy and paste you do.
+
 ## Posting and undercuts
 
 - **Sell tab:** each item to post shows MyFA's plan (price, quantity, duration). Press **Post** at the Auction House and MyFA fills in Blizzard's sell window; check it and press **Post** there.

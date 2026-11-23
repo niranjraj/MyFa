@@ -7,6 +7,7 @@ import statistics
 import time
 from pathlib import Path
 
+import bbb
 import pnl
 
 DAY = 86400
@@ -214,10 +215,16 @@ def plan_flip(ladder, cut, risk_u, min_roi, typical=None, cap=None):
         price, cum = ladder[k]
         q = cum - prev
         prev = cum
+        ahead = 0
+        if cap is not None and units + q > cap:
+            # can't take the whole level (gold or what the market takes): buy part of it; the rest at this
+            # price stays ahead of yours and sells first
+            take = cap - units
+            if take <= 0:
+                break
+            ahead, q = q - take, take
         units += q
         cost += q * price
-        if cap is not None and units > cap:
-            break
         nxt = ladder[k + 1][0]
         resale = min(nxt, typical) if typical else nxt
         net = resale * (1 - cut) - risk_u
@@ -225,8 +232,10 @@ def plan_flip(ladder, cut, risk_u, min_roi, typical=None, cap=None):
             continue   # a higher next listing might still make it work
         profit = net * units - cost
         if not best or profit > best["profit"]:
-            best = {"units": units, "cost": cost, "top": price, "resale": int(resale), "next": nxt,
+            best = {"units": units, "cost": cost, "top": price, "resale": int(resale), "next": nxt, "ahead": ahead,
                     "profit": profit, "net": net, "capped_by_history": bool(typical and typical < nxt)}
+        if ahead:
+            break
     return best
 
 
@@ -431,7 +440,7 @@ def analyse(sv, history: History, cfg, now=None):
         roi = (plan["net"] - avg) / avg if avg else 0
         if profit < cfg["min_profit"] or roi < cfg["min_roi"]:
             continue
-        days_to_sell = units / per_day if per_day else None
+        days_to_sell = (units + plan.get("ahead", 0)) / per_day if per_day else None
         if days_to_sell and days_to_sell > max_days * 1.01:
             skips["slow"].append(name(i))
             continue
@@ -458,12 +467,89 @@ def analyse(sv, history: History, cfg, now=None):
             "sold_lo": round(st["lo"], 1) if st else None, "sold_hi": round(st["hi"], 1) if st else None,
             "sells": label, "conf": conf, "days_to_sell": round(days_to_sell, 1) if days_to_sell else None,
             "profit_day": int(profit_day) if profit_day is not None else None,
-            "why": speed + f"Buy all {units} listed at up to {fmt(plan['top'])} and relist at {fmt(plan['resale'])}, "
+            "why": speed + (f"Buy {units} at up to {fmt(plan['top'])} ({plan['ahead']} more at that price sell first)"
+                            if plan.get("ahead") else f"Buy all {units} listed at up to {fmt(plan['top'])}")
+                   + f" and relist at {fmt(plan['resale'])}, "
                    f"{price_note}; you'll be the cheapest seller."
                    + ((" Sells within a day." if days_to_sell < 1 else f" About {days_to_sell:.1f} days to sell.") if days_to_sell else "")
                    + f" {int(cut * 100)}% cut and likely lost deposits included.",
             "risk_unit": int(risk_u), "sell_rate": round(p_sell, 2),
         })
+    # ---- deals you pasted from Booty Bay Broker: their sales figures, your flip checks ------------------
+    bbb_info = None
+    pasted = bbb.load() if cfg.get("use_bbb", True) else None
+    if pasted and pasted.get("rows"):
+        my_faction = realm_key.rpartition("-")[2]
+        age_min = int((now - pasted["t"]) / 60)
+        info = {"market": pasted.get("market"), "faction": pasted.get("faction"), "age_min": age_min,
+                "rows": len(pasted["rows"]), "passed": [], "surge": [], "nogap": [], "rare": [], "unknown": [],
+                "gone": [], "wrong_faction": pasted.get("faction") not in (None, my_faction)}
+        have = {r["id"] for r in flips}
+        for d in ([] if info["wrong_faction"] else pasted["rows"]):
+            i = ids_by_name.get(d["name"].lower())
+            if i is None:
+                info["unknown"].append(d["name"])
+                continue
+            if i in have:
+                continue
+            if d.get("surge"):
+                info["surge"].append(d["name"])
+                continue
+            mid, lo = d.get("sold") or 0, d.get("lo") or 0
+            if d.get("label") == "Rarely sells" or mid < min_sold:
+                info["rare"].append(d["name"])
+                continue
+            s_ = scan.get(i)
+            mine_newer = int(realm.get("lastScan") or 0) > d.get("seen", d.get("t", 0))
+            if mine_newer:
+                # your own scan is newer: trust what it shows now
+                if not s_ or (s_.get("m") or 0) > d["lowest"] * 1.05:
+                    info["gone"].append(d["name"])   # the cheap listing is gone: someone bought or relisted it
+                    continue
+                ladder = s_.get("l") or []
+            else:
+                ladder = [[d["lowest"], d["available"]], [d["next"] or d["usual"], d["available"] + 1]]
+            if len(ladder) < 2:
+                ladder = ladder + [[d["usual"], (ladder[-1][1] if ladder else 0) + 1]]
+            per_day = lo if lo > 0 else mid / 2
+            cap = max(1, int(per_day * max_days))
+            if budget != float("inf") and ladder[0][0] > 0:
+                cap = min(cap, int(budget // ladder[0][0]))
+            risk_u = riskm.per_unit(i, "home")
+            p_sell = riskm.rate(i)
+            plan = plan_flip(ladder, cut, risk_u, float(cfg["min_roi"]), d["usual"], cap)
+            profit = int(plan["profit"] - 100 * (1 - p_sell) / p_sell) if plan else 0
+            avg = plan["cost"] / plan["units"] if plan else 0
+            roi = (plan["net"] - avg) / avg if plan and avg else 0
+            if not plan or profit < cfg["min_profit"] or roi < cfg["min_roi"]:
+                info["nogap"].append(d["name"])
+                continue
+            units = plan["units"]
+            days_to_sell = (units + plan.get("ahead", 0)) / per_day if per_day else None
+            flips.append({
+                "id": i, "name": name(i), "q": quality(i), "kind": "flip", "source": "bbb",
+                "max": int(plan["top"]), "qty": units, "avg": int(avg), "sell": plan["resale"],
+                "profit": profit, "roi": round(roi, 3), "listed": (s_ or {}).get("q", d["available"]), "days": 7,
+                "risk": "medium", "usual": int(d["usual"]), "usual_basis": "Booty Bay Broker",
+                "sold_day": round(mid, 1), "sold_lo": round(lo, 1), "sold_hi": round(d.get("hi") or mid, 1),
+                "sells": d.get("label") or sells_label(mid), "conf": "Booty Bay Broker",
+                "days_to_sell": round(days_to_sell, 1) if days_to_sell else None,
+                "profit_day": int(profit / units * min(units, per_day)),
+                "why": (f"From Booty Bay Broker ({info['market']}, pasted {age_min} min ago): {d.get('label') or 'sells'}, "
+                        f"about {rate_txt(mid)} a day ({rate_txt(lo)} to {rate_txt(d.get('hi') or mid)}), usual sale price {fmt(d['usual'])}. "
+                        + (f"Buy {units} at up to {fmt(plan['top'])} ({plan['ahead']} more at that price will sell before yours)"
+                           if plan.get("ahead") else f"Buy all {units} at up to {fmt(plan['top'])}")
+                        + f" and relist at {fmt(plan['resale'])}"
+                        + (f" (next listing {fmt(plan['next'])})" if plan["next"] < d["usual"] else "")
+                        + "; you'll be the cheapest seller."
+                        + ((" Sells within a day." if days_to_sell < 1 else f" About {days_to_sell:.1f} days to sell.") if days_to_sell else "")
+                        + (" Prices checked against your newer scan." if mine_newer else " Their scan is newer than yours: check the price in game first.")
+                        + f" {int(cut * 100)}% cut and likely lost deposits included."),
+                "risk_unit": int(risk_u), "sell_rate": round(p_sell, 2),
+            })
+            info["passed"].append(d["name"])
+        bbb_info = info
+
     # best gold a day first; unmeasured ones after the measured ones
     flips.sort(key=lambda r: (r["kind"] == "snipe", r["profit_day"] is None, -(r["profit_day"] or 0), -r["profit"]))
     flips = flips[: cfg["max_targets"]]
@@ -1124,7 +1210,7 @@ def analyse(sv, history: History, cfg, now=None):
         "profiles": profiles, "next_moves": next_moves,
         "mail_seen": any(c.get("mailT") for c in chars),
         "neutral": neutral, "profit": profit, "my_auctions": my_auctions,
-        "flip_skips": skips, "sales_watch": {"hours": round(smodel["hours"], 1), "days": smodel["days"],
+        "bbb": bbb_info, "flip_skips": skips, "sales_watch": {"hours": round(smodel["hours"], 1), "days": smodel["days"],
                                              "items": len(smodel["items"])},
         "risk": {"p0": riskm.p0, "p0_basis": riskm.p0_basis, "dep_rate": riskm.dep_rate, "dep_learned": riskm.dep_learned,
                  "units": {i: int(riskm.per_unit(i, "home")) for i in {r["id"] for r in positions} | {r["id"] for r in flips}

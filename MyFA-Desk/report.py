@@ -624,8 +624,9 @@ def build(result, advice=None, config_path=""):
     it = lambda r: item(r, chart_ids)  # noqa: E731
     sort_or = lambda x, d=-999: x if x is not None else d  # noqa: E731
 
-    CONF_CLS = {"high": "act-c", "medium": "risk-med", "low": "risk-high", "not measured": "risk-high"}
-    CONF_ORDER = {"high": 0, "medium": 1, "low": 2, "not measured": 3}
+    CONF_CLS = {"high": "act-c", "medium": "risk-med", "low": "risk-high", "not measured": "risk-high",
+                "Booty Bay Broker": "act-v"}
+    CONF_ORDER = {"high": 0, "Booty Bay Broker": 1, "medium": 2, "low": 3, "not measured": 4}
 
     def rate(x):
         return f"{x:.0f}" if x >= 10 else f"{x:.1f}"
@@ -672,6 +673,33 @@ def build(result, advice=None, config_path=""):
             shown = ", ".join(esc(n) for n in names[:4]) + (f" and {len(names) - 4} more" if len(names) > 4 else "")
             skip_bits.append(f"{len(names)} {text} ({shown})")
     skip_html = (f'<p class="fine watchnote">Looked cheap but skipped: {"; ".join(skip_bits)}.</p>' if skip_bits else "")
+
+    # deals pasted from Booty Bay Broker
+    bi = result.get("bbb")
+    if bi:
+        if bi["wrong_faction"]:
+            bsum = f'The pasted deals are for {esc(bi["faction"])}, not your faction: ignored. Clear them and paste the right page.'
+        else:
+            parts_b = [f'<b>{len(bi["passed"])} passed</b>']
+            for key, text in (("nogap", "no gap to the next listing, so no profit after the cut"),
+                              ("surge", "supply surge"), ("rare", "don't sell often enough"),
+                              ("gone", "already gone in your newer scan"), ("unknown", "not seen in your scans yet")):
+                if bi[key]:
+                    names = ", ".join(esc(n) for n in bi[key][:3]) + (f" +{len(bi[key]) - 3}" if len(bi[key]) > 3 else "")
+                    parts_b.append(f'{len(bi[key])} {text} ({names})')
+            bsum = (f'Booty Bay Broker deals ({esc(bi["market"] or "?")}, {esc(bi["faction"] or "?")}), pasted {bi["age_min"]} min ago, '
+                    f'{bi["rows"]} checked: ' + "; ".join(parts_b) + '. Passed ones are in the table below, marked <em>Booty Bay Broker</em>.')
+        bsum_html = f'<p class="fine watchnote">{bsum} <button type="button" class="linkbtn live-only" id="bbb-clear">Clear pasted deals</button></p>'
+    else:
+        bsum_html = ""
+    bbb_form = (
+        '<form class="addflip bbbform live-only" id="bbb-form" autocomplete="off">'
+        '<div class="af-title"><b>Check Booty Bay Broker deals</b><span class="hint">Open their WoW Forever deals page for your '
+        'realm and faction, press Ctrl+A then Ctrl+C, and paste here. Paste more pages one after another. MyFA runs your flip '
+        'checks on every row: gap to the next listing, sales a day, supply surge, profit after the cut.</span></div>'
+        '<label class="wide">Pasted page<textarea id="bbb-text" rows="3" required placeholder="Paste the deals page here"></textarea></label>'
+        '<button type="submit" class="cbtn primary">Check deals</button>'
+        '<span class="hint" id="bbb-msg" role="status"></span></form>')
 
     vendor_rows = [[
         td(it(r), r["name"]),
@@ -859,7 +887,7 @@ def build(result, advice=None, config_path=""):
     panels.append(("neutral", "Neutral AH", n_count if nt.get("scan_ts") else None, neutral_panel(result, it, sort_or),
                    "Gadgetzan, Booty Bay and Everlook: a separate market both factions share. What's worth carrying between it and yours."))
     panels += [
-        ("flips", "Flips", len(result["flips"]), watch_html + skip_html + table("flips", [
+        ("flips", "Flips", len(result["flips"]), bbb_form + watch_html + bsum_html + skip_html + table("flips", [
             ("Item", "s", ""), ("Buy up to", "n", "num"), ("Qty", "n", "num"), ("Relist at", "n", "num"),
             ("Sold a day", "n", "num"), ("Days to sell", "n", "num"), ("Profit", "n", "num"), ("Gold a day", "n", "num"),
             ("ROI", "n", "num"), ("Confidence", "n", ""), ("Why", "s", "why")], flips_rows,
@@ -1244,6 +1272,13 @@ td.barcell {{ vertical-align: middle; }}
 .neutralstat {{ margin: 0 0 22px; }}
 .block.auctions {{ margin-bottom: 28px; }}
 .watchnote {{ margin: 0 0 10px; max-width: 980px; }}
+.bbbform label.wide {{ flex: 1 1 420px; }}
+.bbbform textarea {{ width: 100%; min-height: 64px; resize: vertical; background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: 13px/1.4 var(--sans); }}
+.bbbform textarea:focus {{ border-color: var(--gold); outline: none; }}
+.linkbtn {{ background: none; border: 0; padding: 0; margin-left: 6px; color: var(--gold); font: inherit; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 2px; }}
+body:not(.live) .linkbtn.live-only {{ display: none; }}
 @media (max-width: 720px) {{ table.stmt .opt {{ display: none; }} table.stmt th[scope=row] .sub {{ display: none; }} }}
 footer {{ margin-top: 28px; color: var(--faint); font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 6px 24px; }}
 @media (prefers-reduced-motion: reduce) {{ * {{ transition: none !important; }} }}
