@@ -359,7 +359,7 @@ local function updateRow(r, e)
     elseif currentTab == "gear" then
         local up = e.pct and string.format("%s+%d%%|r", GREEN, e.pct) or (GREEN .. "empty slot|r")
         r.detail:SetText(string.format("%s%s|r  %s  %s", GOLDC, e.slot or "?", up,
-            MUTED .. (e.replaces and ("over " .. e.replaces) or "") .. "|r"))
+            MUTED .. (e.replaces and ("over " .. e.replaces) or "") .. ((e.where or "") ~= "" and ("  at " .. e.where) or "") .. "|r"))
         r.profit:SetText(ns.Money(e.price or 0))
     elseif currentTab == "listed" then
         -- name line, right: what's going on; detail line: the price to act on and the timing
@@ -531,7 +531,7 @@ function ns.RefreshPanel()
         if currentTab == "gear" then
             panel.empty:SetText("No gear upgrades yet.\n\nPress Full scan: MyFA reads the stats of every gear listing (chat says "
                 .. "when it's done). Then /reload so MyFA Desk can score them for your specs, and /reload again once Desk has "
-                .. "written the results.")
+                .. "written the results.\n\nType /myfa gear to see which step is missing.")
         elseif currentTab == "listed" then
             panel.empty:SetText("No auctions recorded at this Auction House.\n\nOpen the Auction House's Auctions tab once so MyFA can see "
                 .. "what you have listed. Then this tab shows which ones are undercut, and Check prices looks up live prices.")

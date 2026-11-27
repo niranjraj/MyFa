@@ -65,13 +65,46 @@ local PATTERNS = {
     { "^%+(%d+) Intellect", "INT" }, { "^%+(%d+) Spirit", "SPI" },
 }
 
+-- the text of an item's tooltip: the tooltip data API where the client has it, otherwise a hidden tooltip
+local scanTip
+ns.TooltipMethod = "none"
+function ns.TooltipLines(link)
+    local out = {}
+    if C_TooltipInfo and C_TooltipInfo.GetHyperlink then
+        local ok, data = pcall(C_TooltipInfo.GetHyperlink, link)
+        if ok and data and data.lines and #data.lines > 0 then
+            for _, line in ipairs(data.lines) do out[#out + 1] = line.leftText or "" end
+            ns.TooltipMethod = "tooltip data"
+            return out
+        end
+    end
+    if not scanTip then
+        local ok, tip = pcall(CreateFrame, "GameTooltip", "MyFAScanTip", nil, "GameTooltipTemplate")
+        scanTip = ok and tip or false
+    end
+    if scanTip and scanTip.SetHyperlink then
+        pcall(scanTip.SetOwner, scanTip, WorldFrame, "ANCHOR_NONE")
+        scanTip:ClearLines()
+        local ok = pcall(scanTip.SetHyperlink, scanTip, link)
+        local n = ok and scanTip.NumLines and scanTip:NumLines() or 0
+        for i = 1, n do
+            local fs = _G["MyFAScanTipTextLeft" .. i]
+            out[#out + 1] = fs and fs.GetText and fs:GetText() or ""
+        end
+        scanTip:Hide()
+        if n > 0 then ns.TooltipMethod = "hidden tooltip" end
+    end
+    return out
+end
+
 -- returns "STA=10;INT=7;HEAL=22", the class restriction (or nil), and whether the item was fully readable
 function ns.ReadGearStats(link)
-    local stats = {}
+    local stats, apiOk = {}, false
     local getStats = (C_Item and C_Item.GetItemStats) or GetItemStats
     if getStats then
         local ok, t = pcall(getStats, link)
         if ok and type(t) == "table" then
+            apiOk = true
             for k, v in pairs(t) do
                 if type(v) == "number" and v ~= 0 then
                     local short = k:gsub("^ITEM_MOD_", ""):gsub("_SHORT$", ""):gsub("_NAME$", "")
@@ -81,25 +114,19 @@ function ns.ReadGearStats(link)
         end
     end
     local classes, lines = nil, 0
-    if C_TooltipInfo and C_TooltipInfo.GetHyperlink then
-        local ok, data = pcall(C_TooltipInfo.GetHyperlink, link)
-        if ok and data and data.lines then
-            for _, line in ipairs(data.lines) do
-                local text = line.leftText
-                if text and text ~= "" then
-                    lines = lines + 1
-                    classes = classes or text:match("^Classes: (.+)$")
-                    for _, p in ipairs(PATTERNS) do
-                        local a, b = text:match(p[1])
-                        if a then
-                            if p[2] == "SCHOOL" then
-                                stats[a:upper()] = math.max(stats[a:upper()] or 0, tonumber(b))
-                            else
-                                stats[p[2]] = math.max(stats[p[2]] or 0, tonumber(a))
-                            end
-                            break
-                        end
+    for _, text in ipairs(ns.TooltipLines(link)) do
+        if text ~= "" then
+            lines = lines + 1
+            classes = classes or text:match("^Classes: (.+)$")
+            for _, p in ipairs(PATTERNS) do
+                local a, b = text:match(p[1])
+                if a then
+                    if p[2] == "SCHOOL" then
+                        stats[a:upper()] = math.max(stats[a:upper()] or 0, tonumber(b))
+                    else
+                        stats[p[2]] = math.max(stats[p[2]] or 0, tonumber(a))
                     end
+                    break
                 end
             end
         end
@@ -107,7 +134,8 @@ function ns.ReadGearStats(link)
     local parts = {}
     for k, v in pairs(stats) do parts[#parts + 1] = k .. "=" .. (math.floor(v * 10 + 0.5) / 10) end
     table.sort(parts)
-    return table.concat(parts, ";"), classes, lines > 1
+    -- readable: the tooltip had text, or (no tooltip at all) the stat API answered
+    return table.concat(parts, ";"), classes, lines > 1 or (apiOk and lines == 0)
 end
 
 -- what Desk needs about one gear item, kept in MyFA_DB.gear (shared by all characters)
@@ -250,3 +278,38 @@ function ns.GearList()
 end
 
 ns._gearKeyLink = keyLink
+
+-- /myfa gear: which step is missing
+function ns.GearStatus()
+    local c = ns.Char()
+    local worn, wornRead = 0, 0
+    for _, key in pairs(c.gear or {}) do
+        worn = worn + 1
+        if MyFA_DB.gear[key] then wornRead = wornRead + 1 end
+    end
+    ns.Print(string.format("gear: wearing %d items, stats read for %d.", worn, wornRead))
+    local any = false
+    for _, rk in ipairs({ ns.RealmKey(), ns.NeutralKey and ns.NeutralKey() or nil }) do
+        local realm = rk and MyFA_DB.realms[rk]
+        if realm and realm.gear then
+            local n, read = 0, 0
+            for key in pairs(realm.gear) do
+                n = n + 1
+                if MyFA_DB.gear[key] then read = read + 1 end
+            end
+            any = any or n > 0
+            ns.Print(string.format("  %s: %d gear listings in the last scan, stats read for %d.", rk, n, read))
+        end
+    end
+    if not any then ns.Print("  no gear listings yet: press Full scan at the Auction House (MyFA 1.9.0 or newer).") end
+    if total > 0 then ns.Print(string.format("  still reading stats: %d of %d done. Wait for the chat message, then /reload.", done, total)) end
+    ns.Print("  stats read with: " .. ns.TooltipMethod .. ".")
+    local u = mine()
+    if u then
+        local n = 0
+        for _, list in pairs(u.lists or {}) do n = n + #list end
+        ns.Print(string.format("  MyFA Desk lists: %s / %s, %d upgrades.", u.main or "?", (u.off ~= "" and u.off) or "none", n))
+    else
+        ns.Print("  no lists from MyFA Desk for this character yet: /reload, let Desk say \"Targets ready\", then /reload again.")
+    end
+end

@@ -2,7 +2,7 @@
 ## Title: MyFA
 ## Notes: MyFA, your auction house finance advisor: scans prices, tracks bags and bank, and shows buy, sell and craft targets from MyFA Desk.
 ## Author: MyFA
-## Version: 1.9.0
+## Version: 1.9.1
 ## SavedVariables: MyFA_DB
 ## OptionalDeps: MyFA_Desk
 ## IconTexture: Interface\Icons\INV_Misc_Coin_01

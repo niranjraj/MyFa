@@ -1110,7 +1110,9 @@ def analyse(sv, history: History, cfg, now=None):
     my_auctions.sort(key=lambda r: (order_a[r["status"]], -(r["u"] * r["qty"])))
 
     # ---- gear upgrades for each character ---------------------------------------------------------------
-    gear_ups, gear_wts = upg.all_upgrades(db, realm, char_items, realm_key)
+    gear_listings, gear_where = upg.merge_listings(realm, neutral_realm)
+    gear_ups, gear_wts = upg.all_upgrades(db, {"gear": gear_listings}, char_items, realm_key, gear_where)
+    gear_status = upg.status(db, gear_listings, char_items)
     for ck, u in gear_ups.items():
         u["name"] = ck.split("-")[0]
 
@@ -1216,7 +1218,7 @@ def analyse(sv, history: History, cfg, now=None):
         "profiles": profiles, "next_moves": next_moves,
         "mail_seen": any(c.get("mailT") for c in chars),
         "neutral": neutral, "profit": profit, "my_auctions": my_auctions,
-        "upgrades": gear_ups, "spec_options": {c: list(w) for c, w in gear_wts.items()},
+        "upgrades": gear_ups, "gear_status": gear_status, "spec_options": {c: list(w) for c, w in gear_wts.items()},
         "bbb": bbb_info, "flip_skips": skips, "sales_watch": {"hours": round(smodel["hours"], 1), "days": smodel["days"],
                                              "items": len(smodel["items"])},
         "risk": {"p0": riskm.p0, "p0_basis": riskm.p0_basis, "dep_rate": riskm.dep_rate, "dep_learned": riskm.dep_learned,
@@ -1468,7 +1470,8 @@ def targets_table(result):
         "forgets": [{"id": int(k), "t": v} for k, v in (result["manual"].get("forgets") or {}).items()],
         "upgrades": {ck: {"main": u["main"], "off": u["off"], "lists": {
                         sp["spec"]: [{"id": r["id"], "key": r["key"], "name": r["name"], "slot": r["slot"], "price": r["price"],
-                                      "pct": r["pct"], "gain": r["gain"], "replaces": r["replaces"], "stats": r["stats"]}
+                                      "pct": r["pct"], "gain": r["gain"], "replaces": r["replaces"], "stats": r["stats"],
+                                      "where": r.get("where", "")}
                                      for r in sp["items"][:25]] for sp in u["specs"]}}
                      for ck, u in (result.get("upgrades") or {}).items()},
         "risk": result["risk"]["units"],

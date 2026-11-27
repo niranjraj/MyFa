@@ -1,6 +1,6 @@
 -- MyFA Core: saved data, character snapshot (bags, gold, recipes, vendor prices), slash commands.
 local ADDON, ns = ...
-ns.VERSION = "1.9.0"
+ns.VERSION = "1.9.1"
 ns.HISTORY_DAYS = 14
 
 local DB_DEFAULTS = {
@@ -517,6 +517,7 @@ local HELP = {
     "/myfa - show or hide the panel",
     "/myfa scan - full Auction House scan (once every 15 min)",
     "/myfa status - data and targets age",
+    "/myfa gear - why the Gear tab is empty (which step is missing)",
     "/myfa add - open the Add flip window (or use + Add flip on the My flips tab)",
     "/myfa bought [item] qty price - track something you bought earlier, e.g. /myfa bought [Golden Sansam] 20 14s50c",
     "/myfa forget [item] - stop tracking an item's flip",
@@ -547,6 +548,8 @@ SlashCmdList.MYFA = function(msg)
         else
             ns.Print("usage: /myfa ah auto|neutral|faction  (now " .. (MyFA_DB.settings.ahMode or "auto") .. ")")
         end
+    elseif cmd == "gear" then
+        ns.GearStatus()
     elseif cmd == "status" then
         local r = MyFA_DB.realms[ns.RealmKey()]
         if r and r.lastScan then

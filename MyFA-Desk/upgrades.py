@@ -221,16 +221,66 @@ def key_stats(stats, w):
     return ", ".join(parts)
 
 
-def find_upgrades(db, realm, char_key, char, settings, wts, limit=40):
+def merge_listings(realm, neutral_realm):
+    """Cheapest price per gear item across your faction's and the neutral Auction House; where = keys cheaper at neutral."""
+    merged, where = {}, {}
+    for label, rr in (("", realm), ("Neutral AH", neutral_realm)):
+        for k, v in ((rr or {}).get("gear") or {}).items():
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                continue
+            k = str(k)
+            if k not in merged or v < merged[k]:
+                merged[k] = v
+                if label:
+                    where[k] = label
+                else:
+                    where.pop(k, None)
+    return merged, where
+
+
+def _worn(char):
+    g = char.get("gear")
+    if isinstance(g, dict):
+        return {int(s): str(k) for s, k in g.items()}
+    if isinstance(g, list):
+        return {i + 1: str(k) for i, k in enumerate(g) if k}
+    return {}
+
+
+def _ver(v):
+    try:
+        return tuple(int(x) for x in str(v).split(".")[:3])
+    except ValueError:
+        return (0,)
+
+
+def status(db, listings, chars):
+    """What the Gear upgrades tab needs and what it has, so an empty tab can say which step is missing."""
+    info = db.get("gear") or {}
+    st = {"version": db.get("addonVersion"), "old_addon": False, "listings": len(listings),
+          "read": sum(1 for k in listings if k in info), "chars": {}, "unseen": []}
+    st["old_addon"] = bool(st["version"]) and _ver(st["version"]) < (1, 9, 0)
+    for key, c in chars:
+        if not isinstance(c, dict):
+            continue
+        worn = _worn(c)
+        if not worn:
+            st["unseen"].append(key.split("-")[0])
+            continue
+        st["chars"][key] = {"worn": len(worn), "read": sum(1 for k in worn.values() if k in info)}
+    return st
+
+
+def find_upgrades(db, realm, char_key, char, settings, wts, limit=40, where=None):
     """Upgrades for one character: {'class', 'level', 'specs': [{'spec', 'items': [...]}, ...]}."""
     gear_info = db.get("gear") or {}
     cls = (settings.get("class") or char.get("classFile") or "").upper()
     if cls not in wts:
         return None
     level = int(char.get("level") or 1)
-    worn = {int(s): str(k) for s, k in (char.get("gear") or {}).items()} if isinstance(char.get("gear"), dict) else {}
-    if isinstance(char.get("gear"), list):
-        worn = {i + 1: str(k) for i, k in enumerate(char["gear"]) if k}
+    worn = _worn(char)
     main = settings.get("main") or DEFAULT_SPECS.get(cls, ("", ""))[0]
     off = settings.get("off") if "off" in settings else DEFAULT_SPECS.get(cls, ("", ""))[1]
     pvp = bool(settings.get("pvp"))
@@ -289,7 +339,7 @@ def find_upgrades(db, realm, char_key, char, settings, wts, limit=40):
                 "slot": SLOT_NAME.get(slot, "?"), "price": price, "gain": round(gain, 1),
                 "pct": round(gain / old * 100) if old > 0 else None, "per_gold": round(gain / max(price / 10000, 0.01), 2),
                 "replaces": (gear_info.get(old_key) or {}).get("n") if old_key else None, "empty": old_key is None,
-                "stats": key_stats(stats_of(key), w), "lvl": g.get("lvl", 0),
+                "stats": key_stats(stats_of(key), w), "lvl": g.get("lvl", 0), "where": (where or {}).get(key, ""),
             })
         # most upgrade for the gold first
         items.sort(key=lambda r: -r["per_gold"])
@@ -297,7 +347,7 @@ def find_upgrades(db, realm, char_key, char, settings, wts, limit=40):
     return out
 
 
-def all_upgrades(db, realm, chars, realm_key):
+def all_upgrades(db, realm, chars, realm_key, where=None):
     """Upgrades for every character on this realm and faction, with their spec settings."""
     wts = weights()
     settings = load_settings()
@@ -305,7 +355,7 @@ def all_upgrades(db, realm, chars, realm_key):
     for key, c in chars:
         if not isinstance(c, dict) or not c.get("gear"):
             continue
-        res = find_upgrades(db, realm, key, c, settings.get(key, {}), wts)
+        res = find_upgrades(db, realm, key, c, settings.get(key, {}), wts, where=where)
         if res:
             out[key] = res
     return out, wts

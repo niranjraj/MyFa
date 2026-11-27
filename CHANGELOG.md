@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.1
+- **Gear tab no longer stays empty without saying why.** Desk and the in-game tab now name the missing step: addon too old, characters not seen yet, no gear listings in the scan, or stats not saved yet (a /reload before chat says "gear stats read").
+- New `/myfa gear` command: what MyFA recorded (items worn, gear listings, stats read), whether it is still reading, and whether Desk's lists have arrived.
+- Stats are now also read on clients without the tooltip data API (a hidden tooltip is used instead).
+- Gear listed at the neutral Auction House counts too, marked "Neutral AH" when it's cheaper there.
+
 ## 1.9.0
 - **Gear upgrades from the Auction House**, for any class and the specs you choose.
   - **What the addon records:** what each character wears (updated when you log in, change gear or level up). A Full scan also notes the cheapest listing of every armor piece and weapon, each random suffix ("of the Eagle") separately, and reads each item's stats in the background. Chat says when it's done.

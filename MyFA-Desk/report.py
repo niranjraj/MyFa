@@ -406,10 +406,35 @@ def _dur(sec):
 def gear_panel(result, it):
     ups = result.get("upgrades") or {}
     opts = result.get("spec_options") or {}
+    gs = result.get("gear_status") or {}
+
+    def why_empty():
+        """The first step that's missing, in the order you'd do them."""
+        if gs.get("old_addon"):
+            return (f'The game is running MyFA {esc(gs["version"])}; gear upgrades need 1.9.0 or newer. Update the addon '
+                    '(CurseForge app, or the Settings tab here), restart the game or type <code>/reload</code>, then do the steps below.')
+        if not gs.get("chars"):
+            return ('MyFA hasn\'t seen what your characters wear yet. Log in (or type <code>/reload</code>) on each character with '
+                    'MyFA 1.9.0, then <code>/reload</code> once more so Desk gets it.')
+        if not gs.get("listings"):
+            return ('No gear listings in your last scan. Press <b>Full scan</b> at the Auction House with MyFA 1.9.0, wait for '
+                    'chat to say <i>gear stats read for N items</i>, then <code>/reload</code>.')
+        if not gs.get("read"):
+            return (f'Your last scan found {gs["listings"]:,} gear listings, but their stats haven\'t been saved yet. Wait for chat '
+                    'to say <i>gear stats read for N items</i> before you <code>/reload</code> (reading takes a minute after the '
+                    'scan). If that message never comes, type <code>/myfa gear</code> in game to see what\'s missing.')
+        return None
+
+    def status_line():
+        bits = [f'{gs.get("listings", 0):,} gear listings, stats read for {gs.get("read", 0):,}']
+        if gs.get("unseen"):
+            bits.append("not seen yet (log in on them once): " + ", ".join(esc(n) for n in gs["unseen"]))
+        return '<p class="fine">' + ". ".join(bits) + ".</p>"
+
     if not ups:
-        return ('<div class="empty"><p>No gear data yet. Update the addon, log in on each character (MyFA notes what it wears), '
-                'then press <b>Full scan</b> at the Auction House. MyFA reads the stats of every gear listing in the background '
-                '(chat says when it\'s done); then type <code>/reload</code>.</p></div>')
+        reason = why_empty() or ('None of your characters on this realm has a class MyFA knows. Type <code>/myfa gear</code> in game '
+                                 'to check what it recorded.')
+        return f'<div class="empty"><p>{reason}</p></div>' + (status_line() if gs else "")
     parts = [f'<script type="application/json" id="spec-options">{json.dumps(opts)}</script>']
     for ck, u in sorted(ups.items(), key=lambda kv: kv[0]):
         cls_opts = "".join(f'<option value="{c}"{" selected" if c == u["class"] else ""}>{c.title()}</option>' for c in opts)
@@ -429,7 +454,7 @@ def gear_panel(result, it):
             rows = [[
                 td(esc(r["slot"]), r["slot"]),
                 td(it(r), r["name"]),
-                td(money(r["price"]), r["price"], "num"),
+                td(money(r["price"]) + (f'<span class="fine"> {esc(r["where"])}</span>' if r.get("where") else ""), r["price"], "num"),
                 td((f'+{r["pct"]}%' if r["pct"] is not None else "fills an empty slot"), r["pct"] if r["pct"] is not None else 9999, "num pos"),
                 td(f'{r["per_gold"]:.1f}', r["per_gold"], "num"),
                 td(esc(r["replaces"]) if r["replaces"] else '<span class="na">nothing</span>', r["replaces"] or ""),
@@ -442,13 +467,14 @@ def gear_panel(result, it):
                 + table(f'up-{abs(hash(ck + sp["spec"])) % 10**8}',
                         [("Slot", "s", ""), ("Item", "s", ""), ("Price", "n", "num"), ("Upgrade", "n", "num"),
                          ("Upgrade per gold", "n", "num"), ("Replaces", "s", ""), ("What it adds", "s", ""), ("Level", "n", "num")],
-                        rows, f"No upgrades for {esc(sp['spec'])} on the Auction House right now.")
+                        rows, (why_empty() or f"Nothing on the Auction House beats your gear for {esc(sp['spec'])} right now."))
                 + (f'<p class="fine">{more.strip()}</p>' if more else "") + '</div>')
         parts.append(
             f'<section class="block"><div class="blockhead"><h2>{esc(u["name"])}</h2>'
             f'<p class="lede">Level {u["level"]} {esc(u["class"].title())}: {esc(u["main"])}'
             f'{" / " + esc(u["off"]) if u["off"] else ""}{", PvP" if u["pvp"] else ""}. '
             f'{u["worn"]} items worn are compared.</p></div>{form}{"".join(tables)}</section>')
+    parts.append(status_line())
     parts.append('<p class="fine">Each item gets a score from its stats and your spec\'s stat weights; <em>Upgrade</em> is how much '
                  'higher it scores than what you wear in that slot (rings and trinkets: your weaker one; a two-hander: your '
                  'main and off hand together). Only items your class and level can use. On-use and proc effects aren\'t '
