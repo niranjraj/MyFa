@@ -1470,7 +1470,7 @@ def targets_table(result):
         "forgets": [{"id": int(k), "t": v} for k, v in (result["manual"].get("forgets") or {}).items()],
         "upgrades": {ck: {"main": u["main"], "off": u["off"], "lists": {
                         sp["spec"]: [{"id": r["id"], "key": r["key"], "name": r["name"], "slot": r["slot"], "price": r["price"],
-                                      "pct": r["pct"], "gain": r["gain"], "replaces": r["replaces"], "stats": r["stats"],
+                                      "pct": r["pct"], "gain": r["gain"], "replaces": r["replaces"], "stats": r["stats"].replace("\u2212", "-"),
                                       "where": r.get("where", "")}
                                      for r in sp["items"][:25]] for sp in u["specs"]}}
                      for ck, u in (result.get("upgrades") or {}).items()},

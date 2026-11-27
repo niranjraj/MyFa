@@ -234,7 +234,7 @@ local function rowTooltip(self)
         steps = { string.format("%s upgrade for %s%s.", e.slot or "Gear", spec or "your spec",
                                 e.pct and string.format(": scores %d%% higher", e.pct) or ": fills an empty slot"),
                   e.replaces and ("Replaces: " .. e.replaces) or "Nothing worn there now.",
-                  "Adds: " .. (e.stats or "?"),
+                  "If you swap: " .. (e.stats or "?"),
                   "Cheapest listing: " .. ns.Money(e.price or 0) .. ". Press Search, then buy it in the Auction House window." }
     elseif currentTab == "listed" then
         steps = ns.AuctionAdvice(e)

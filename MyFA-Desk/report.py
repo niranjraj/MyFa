@@ -1,6 +1,7 @@
 """Self-contained HTML dashboard for MyFA Desk results."""
 import html
 import json
+from upgrades import MANA_STYLES
 import time
 
 import guide as guide_mod
@@ -403,6 +404,16 @@ def _dur(sec):
     return f"{d}d {h}h" if h else f"{d}d"
 
 
+def change_html(text):
+    """'+11 healing, −6 Spirit': losses in the loss colour so they can't be missed."""
+    out = []
+    for part in (text or "").split(", "):
+        if not part:
+            continue
+        out.append(f'<span class="{"neg" if part.startswith("\u2212") else "pos"}">{esc(part)}</span>')
+    return ", ".join(out)
+
+
 def gear_panel(result, it):
     ups = result.get("upgrades") or {}
     opts = result.get("spec_options") or {}
@@ -446,7 +457,10 @@ def gear_panel(result, it):
                 f'<label>Class<select name="class" class="sp-class">{cls_opts}</select></label>'
                 f'<label>Main spec<select name="main" class="sp-main">{main_opts}</select></label>'
                 f'<label>Off spec<select name="off" class="sp-off">{off_opts}</select></label>'
-                f'<label class="check"><input type="checkbox" name="pvp"{" checked" if u["pvp"] else ""}> PvP (values Stamina more)</label>'
+                + (f'<label>Mana or healing<select name="mana">' + "".join(
+                    f'<option value="{k}"{" selected" if k == u.get("mana", "balanced") else ""}>{esc(lbl)}</option>'
+                    for k, (lbl, _f) in MANA_STYLES.items()) + '</select></label>' if u.get("uses_mana") else "")
+                + f'<label class="check"><input type="checkbox" name="pvp"{" checked" if u["pvp"] else ""}> PvP (values Stamina more)</label>'
                 '<button type="submit" class="cbtn primary">Save and recalculate</button>'
                 '<span class="hint sp-msg" role="status"></span></form>')
         tables = []
@@ -455,29 +469,31 @@ def gear_panel(result, it):
                 td(esc(r["slot"]), r["slot"]),
                 td(it(r), r["name"]),
                 td(money(r["price"]) + (f'<span class="fine"> {esc(r["where"])}</span>' if r.get("where") else ""), r["price"], "num"),
-                td((f'+{r["pct"]}%' if r["pct"] is not None else "fills an empty slot"), r["pct"] if r["pct"] is not None else 9999, "num pos"),
+                td((f'+{r["pct"]}%' if r["pct"] is not None else '<span class="words">fills an empty slot</span>'), r["pct"] if r["pct"] is not None else 9999, "num pos"),
                 td(f'{r["per_gold"]:.1f}', r["per_gold"], "num"),
                 td(esc(r["replaces"]) if r["replaces"] else '<span class="na">nothing</span>', r["replaces"] or ""),
-                td(esc(r["stats"]), r["stats"]),
+                td(change_html(r["stats"]), r["stats"]),
                 td(str(r["lvl"] or "-"), r["lvl"] or 0, "num"),
             ] for r in sp["items"]]
             more = f' Showing the best {len(sp["items"])} of {sp["count"]}.' if sp["count"] > len(sp["items"]) else ""
             tables.append(
                 f'<div class="spectable"><h3>{esc(sp["spec"])}{" (main)" if sp["spec"] == u["main"] else " (off spec)"}</h3>'
+                + (f'<p class="fine weights">Weights per point: {esc(sp.get("weights", ""))}</p>' if sp.get("weights") else "")
                 + table(f'up-{abs(hash(ck + sp["spec"])) % 10**8}',
                         [("Slot", "s", ""), ("Item", "s", ""), ("Price", "n", "num"), ("Upgrade", "n", "num"),
-                         ("Upgrade per gold", "n", "num"), ("Replaces", "s", ""), ("What it adds", "s", ""), ("Level", "n", "num")],
+                         ("Upgrade per gold", "n", "num"), ("Replaces", "s", ""), ("Change if you swap", "s", ""), ("Level", "n", "num")],
                         rows, (why_empty() or f"Nothing on the Auction House beats your gear for {esc(sp['spec'])} right now."))
                 + (f'<p class="fine">{more.strip()}</p>' if more else "") + '</div>')
         parts.append(
             f'<section class="block"><div class="blockhead"><h2>{esc(u["name"])}</h2>'
             f'<p class="lede">Level {u["level"]} {esc(u["class"].title())}: {esc(u["main"])}'
-            f'{" / " + esc(u["off"]) if u["off"] else ""}{", PvP" if u["pvp"] else ""}. '
+            f'{" / " + esc(u["off"]) if u["off"] else ""}{", PvP" if u["pvp"] else ""}'
+            f'{", " + esc(MANA_STYLES[u["mana"]][0].split(" (")[0].lower()) if u.get("uses_mana") and u.get("mana", "balanced") != "balanced" else ""}. '
             f'{u["worn"]} items worn are compared.</p></div>{form}{"".join(tables)}</section>')
     parts.append(status_line())
     parts.append('<p class="fine">Each item gets a score from its stats and your spec\'s stat weights; <em>Upgrade</em> is how much '
                  'higher it scores than what you wear in that slot (rings and trinkets: your weaker one; a two-hander: your '
-                 'main and off hand together). Only items your class and level can use. On-use and proc effects aren\'t '
+                 'main and off hand together). <em>Change if you swap</em> shows what you gain and, in red, what you lose from the item you wear now. <em>Mana or healing</em> sets how much Intellect, Spirit and mana per 5s count. Only items your class and level can use. On-use and proc effects aren\'t '
                  'counted. To change the weights, edit <code>data/stat_weights.json</code> in the MyFA Desk folder.</p>')
     return "".join(parts)
 
@@ -1201,7 +1217,7 @@ tr.hidden {{ display: none; }}
 .act-c {{ color: var(--pos); }} .act-h {{ color: #8fb8f0; }}
 em {{ font-style: normal; color: var(--text); }}
 .desc strong {{ color: var(--warn); font-weight: 500; }}
-span.pos {{ color: var(--pos); }} span.neg {{ color: var(--neg); }}
+span.pos {{ color: var(--pos); }} td.num .words {{ font-family: var(--sans); }} span.neg {{ color: var(--neg); }}
 
 .block {{ margin: 8px 0 36px; }}
 .tagx {{ font: 600 11px var(--sans); letter-spacing: .04em; padding: 2px 6px; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; }}

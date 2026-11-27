@@ -43,7 +43,7 @@ DEFAULT_WEIGHTS = {
                        "STR": 0.4, "AGI": 0.6, "HIT": 4, "DPS": 1},
     },
     "PALADIN": {
-        "Holy": {"HEAL": 1.0, "SP": 1.0, "INT": 1.0, "SCRIT": 15, "MP5": 2.0, "SPI": 0.1, "STA": 0.3},
+        "Holy": {"HEAL": 1.0, "SP": 1.0, "INT": 1.0, "SCRIT": 15, "MP5": 2.5, "SPI": 0.15, "STA": 0.3},
         "Protection": {"STA": 1.0, "DEF": 1.2, "ARMOR": 0.08, "DODGE": 12, "PARRY": 10, "BLOCK": 6, "BLOCKVAL": 0.3,
                        "SP": 0.6, "HOLY": 0.6, "INT": 0.4, "STR": 0.3},
         "Retribution": {**_MELEE, "INT": 0.2, "SP": 0.2},
@@ -59,14 +59,14 @@ DEFAULT_WEIGHTS = {
         "Subtlety": {"AGI": 1.0, "STR": 0.5, "AP": 0.5, "CRIT": 14, "HIT": 15, "STA": 0.15, "DPS": 4},
     },
     "PRIEST": {
-        "Holy": {"HEAL": 1.0, "SP": 1.0, "INT": 0.6, "SPI": 0.5, "MP5": 2.0, "SCRIT": 8, "STA": 0.2},
-        "Discipline": {"HEAL": 1.0, "SP": 1.0, "INT": 0.7, "SPI": 0.4, "MP5": 2.0, "SCRIT": 8, "STA": 0.25},
+        "Holy": {"HEAL": 1.0, "SP": 1.0, "INT": 0.7, "SPI": 0.9, "MP5": 3.0, "SCRIT": 8, "STA": 0.2},
+        "Discipline": {"HEAL": 1.0, "SP": 1.0, "INT": 0.8, "SPI": 0.7, "MP5": 3.0, "SCRIT": 8, "STA": 0.25},
         "Shadow": {"SP": 1.0, "SHADOW": 1.0, "SHIT": 13, "SCRIT": 8, "INT": 0.3, "SPI": 0.2, "STA": 0.2},
     },
     "SHAMAN": {
         "Elemental": {"SP": 1.0, "NATURE": 1.0, "FIRE": 0.5, "SCRIT": 12, "SHIT": 13, "INT": 0.4, "MP5": 1.0, "STA": 0.2},
         "Enhancement": {**_MELEE, "INT": 0.2},
-        "Restoration": {"HEAL": 1.0, "SP": 1.0, "INT": 0.6, "MP5": 2.2, "SCRIT": 9, "SPI": 0.1, "STA": 0.2},
+        "Restoration": {"HEAL": 1.0, "SP": 1.0, "INT": 0.8, "MP5": 3.0, "SCRIT": 9, "SPI": 0.2, "STA": 0.2},
     },
     "MAGE": {
         "Arcane": {"SP": 1.0, "ARCANE": 1.0, "SCRIT": 11, "SHIT": 13, "INT": 0.5, "SPI": 0.2, "STA": 0.2},
@@ -83,7 +83,7 @@ DEFAULT_WEIGHTS = {
         "Feral (cat)": {"STR": 1.2, "AGI": 1.0, "FAP": 0.5, "AP": 0.5, "CRIT": 14, "HIT": 15, "STA": 0.1},
         "Feral (bear)": {"STA": 1.0, "ARMOR": 0.1, "AGI": 0.6, "DEF": 1.0, "DODGE": 12, "STR": 0.4, "FAP": 0.15,
                          "AP": 0.15, "HIT": 4},
-        "Restoration": {"HEAL": 1.0, "SP": 1.0, "INT": 0.6, "SPI": 0.5, "MP5": 2.0, "SCRIT": 7, "STA": 0.2},
+        "Restoration": {"HEAL": 1.0, "SP": 1.0, "INT": 0.8, "SPI": 0.8, "MP5": 3.0, "SCRIT": 7, "STA": 0.2},
     },
 }
 CLASS_NAMES = {"WARRIOR": "Warrior", "PALADIN": "Paladin", "HUNTER": "Hunter", "ROGUE": "Rogue", "PRIEST": "Priest",
@@ -125,20 +125,56 @@ LOC_SLOT = {
 }
 
 
+WEIGHTS_VERSION = 2
+# healer weights before version 2 (too little value on mana); an unedited copy of these is upgraded
+_V1_HEALERS = {'PALADIN|Holy': {'HEAL': 1.0, 'SP': 1.0, 'INT': 1.0, 'SCRIT': 15, 'MP5': 2.0, 'SPI': 0.1, 'STA': 0.3}, 'PRIEST|Holy': {'HEAL': 1.0, 'SP': 1.0, 'INT': 0.6, 'SPI': 0.5, 'MP5': 2.0, 'SCRIT': 8, 'STA': 0.2}, 'PRIEST|Discipline': {'HEAL': 1.0, 'SP': 1.0, 'INT': 0.7, 'SPI': 0.4, 'MP5': 2.0, 'SCRIT': 8, 'STA': 0.25}, 'SHAMAN|Restoration': {'HEAL': 1.0, 'SP': 1.0, 'INT': 0.6, 'MP5': 2.2, 'SCRIT': 9, 'SPI': 0.1, 'STA': 0.2}, 'DRUID|Restoration': {'HEAL': 1.0, 'SP': 1.0, 'INT': 0.6, 'SPI': 0.5, 'MP5': 2.0, 'SCRIT': 7, 'STA': 0.2}}
+
+# how much a character cares about mana against raw healing or damage: multiplies Intellect, Spirit and mana per 5s
+MANA_STYLES = {
+    "healing": ("Healing first (short fights)", 0.6),
+    "balanced": ("Balanced", 1.0),
+    "mana": ("Mana first (long fights, leveling, PvP)", 1.6),
+}
+MANA_STATS = ("MP5", "SPI", "INT")
+
+
 def weights():
     """The weights in use: data/stat_weights.json if you've edited it, else the defaults (written there once)."""
+    w = None
     try:
         w = json.loads(WEIGHTS_FILE.read_text(encoding="utf-8"))
-        if isinstance(w, dict) and w:
-            return w
     except (OSError, ValueError):
         pass
+    if not isinstance(w, dict) or not w:
+        w = json.loads(json.dumps(DEFAULT_WEIGHTS))
+        w["_version"] = WEIGHTS_VERSION
+        _write_weights(w)
+    elif int(w.get("_version") or 1) < WEIGHTS_VERSION:
+        for key, old in _V1_HEALERS.items():
+            cls, spec = key.split("|")
+            if (w.get(cls) or {}).get(spec) == old:
+                w[cls][spec] = dict(DEFAULT_WEIGHTS[cls][spec])
+        w["_version"] = WEIGHTS_VERSION
+        _write_weights(w)
+    return {c: v for c, v in w.items() if not c.startswith("_") and isinstance(v, dict)}
+
+
+def _write_weights(w):
     try:
         DATA.mkdir(parents=True, exist_ok=True)
-        WEIGHTS_FILE.write_text(json.dumps(DEFAULT_WEIGHTS, indent=1), encoding="utf-8")
+        WEIGHTS_FILE.write_text(json.dumps(w, indent=1), encoding="utf-8")
     except OSError:
         pass
-    return DEFAULT_WEIGHTS
+
+
+def styled(w, style):
+    """The spec's weights with the character's healing-or-mana choice applied."""
+    f = MANA_STYLES.get(style or "balanced", MANA_STYLES["balanced"])[1]
+    return {k: (v * f if k in MANA_STATS else v) for k, v in w.items()}
+
+
+def uses_mana(cls, wts):
+    return any(any(k in MANA_STATS and v >= 0.3 for k, v in sw.items()) for sw in (wts.get(cls) or {}).values())
 
 
 def load_settings():
@@ -148,9 +184,10 @@ def load_settings():
         return {}
 
 
-def save_settings(char_key, cls, main, off, pvp):
+def save_settings(char_key, cls, main, off, pvp, mana="balanced"):
     s = load_settings()
-    s[char_key] = {"class": cls, "main": main, "off": off, "pvp": bool(pvp)}
+    s[char_key] = {"class": cls, "main": main, "off": off, "pvp": bool(pvp),
+                   "mana": mana if mana in MANA_STYLES else "balanced"}
     DATA.mkdir(parents=True, exist_ok=True)
     SETTINGS_FILE.write_text(json.dumps(s, indent=1), encoding="utf-8")
 
@@ -209,6 +246,26 @@ def usable(g, cls, level):
     else:
         return False
     return True
+
+
+def change_stats(new, old, w, n=5):
+    """What changes if you swap, the stats that matter most first: '+11 healing, −6 Spirit, −4 mana per 5s'."""
+    keys = {k for k in set(new) | set(old) if w.get(k, 0) > 0}
+    ranked = sorted(((abs((new.get(k, 0) - old.get(k, 0)) * w[k]), k, new.get(k, 0) - old.get(k, 0)) for k in keys), reverse=True)
+    parts = []
+    for _, k, d in ranked[:n]:
+        if abs(d) < 0.05:
+            continue
+        label = STAT_LABEL.get(k, k.lower())
+        sign = "+" if d > 0 else "\u2212"
+        parts.append(f"{sign}{abs(d):g}{label}" if k in PERCENT else f"{sign}{abs(d):g} {label}")
+    return ", ".join(parts)
+
+
+def weights_text(w):
+    """'healing 1 · mana per 5s 3 · Spirit 0.8 …' for the weights that count, biggest first."""
+    ranked = sorted(((v, k) for k, v in w.items() if v > 0 and k not in PERCENT and k != "DPS"), reverse=True)
+    return " \u00b7 ".join(f"{STAT_LABEL.get(k, k.lower())} {round(v, 2):g}" for v, k in ranked[:7])
 
 
 def key_stats(stats, w):
@@ -284,8 +341,10 @@ def find_upgrades(db, realm, char_key, char, settings, wts, limit=40, where=None
     main = settings.get("main") or DEFAULT_SPECS.get(cls, ("", ""))[0]
     off = settings.get("off") if "off" in settings else DEFAULT_SPECS.get(cls, ("", ""))[1]
     pvp = bool(settings.get("pvp"))
+    mana = settings.get("mana") if settings.get("mana") in MANA_STYLES else "balanced"
     listings = {str(k): int(v) for k, v in ((realm or {}).get("gear") or {}).items()}
-    out = {"class": cls, "level": level, "main": main, "off": off, "pvp": pvp, "specs": [], "worn": len(worn)}
+    out = {"class": cls, "level": level, "main": main, "off": off, "pvp": pvp, "mana": mana,
+           "uses_mana": uses_mana(cls, wts), "specs": [], "worn": len(worn)}
 
     def stats_of(key):
         g = gear_info.get(key)
@@ -295,6 +354,7 @@ def find_upgrades(db, realm, char_key, char, settings, wts, limit=40, where=None
         w = wts[cls].get(spec)
         if not w:
             continue
+        w = styled(w, mana)
 
         def sc(key, slot):
             return score(stats_of(key), w, slot, cls, spec, pvp)
@@ -321,8 +381,13 @@ def find_upgrades(db, realm, char_key, char, settings, wts, limit=40, where=None
             if g.get("k") == 4 and g.get("u") in (7, 8, 9):
                 slot = 18   # relics share the ranged slot
             new = sc(key, slot)
+            old_stats = None
             if g.get("loc") == "INVTYPE_2HWEAPON":
                 old, old_key = mh[0] + oh[0], mh[1]
+                old_stats = {}
+                for k_ in (mh[1], oh[1]):
+                    for a_, b_ in (stats_of(k_) if k_ else {}).items():
+                        old_stats[a_] = old_stats.get(a_, 0) + b_
             elif slot == 16:
                 old, old_key = mh   # a one-hander against your main hand (or your two-hander, with an empty off hand)
             elif slot == 17:
@@ -339,11 +404,12 @@ def find_upgrades(db, realm, char_key, char, settings, wts, limit=40, where=None
                 "slot": SLOT_NAME.get(slot, "?"), "price": price, "gain": round(gain, 1),
                 "pct": round(gain / old * 100) if old > 0 else None, "per_gold": round(gain / max(price / 10000, 0.01), 2),
                 "replaces": (gear_info.get(old_key) or {}).get("n") if old_key else None, "empty": old_key is None,
-                "stats": key_stats(stats_of(key), w), "lvl": g.get("lvl", 0), "where": (where or {}).get(key, ""),
+                "stats": change_stats(stats_of(key), old_stats if old_stats is not None else (stats_of(old_key) if old_key else {}), w),
+                "lvl": g.get("lvl", 0), "where": (where or {}).get(key, ""),
             })
         # most upgrade for the gold first
         items.sort(key=lambda r: -r["per_gold"])
-        out["specs"].append({"spec": spec, "items": items[:limit], "count": len(items)})
+        out["specs"].append({"spec": spec, "items": items[:limit], "count": len(items), "weights": weights_text(w)})
     return out
 
 

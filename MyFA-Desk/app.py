@@ -292,7 +292,7 @@ class Desk:
         main, off = data.get("main") or "", data.get("off") or ""
         if main not in wts[cls] or (off and off not in wts[cls]):
             return {"error": "Pick specs from the list for that class."}
-        upgrades.save_settings(ck, cls, main, off, bool(data.get("pvp")))
+        upgrades.save_settings(ck, cls, main, off, bool(data.get("pvp")), str(data.get("mana") or "balanced"))
         log(f"Gear upgrades for {ck.split('-')[0]}: {cls.title()} {main}{' / ' + off if off else ''}"
             f"{' (PvP)' if data.get('pvp') else ''}.")
         self.reprocess.set()
@@ -1040,7 +1040,8 @@ CONTROL_HTML = r"""
       msg.textContent = 'Saving…'; msg.style.color = '';
       const before = (await (await fetch('/api/status', { cache: 'no-store' })).json()).report_ts;
       const r = await post('/api/upgrade-specs', { char: f.dataset.char, class: cls.value, main: main.value, off: off.value,
-                                                  pvp: f.querySelector('[name=pvp]').checked });
+                                                  pvp: f.querySelector('[name=pvp]').checked,
+                                                  mana: (f.querySelector('[name=mana]') || {}).value || 'balanced' });
       if (!r.ok) { msg.textContent = r.error || 'Couldn\'t save.'; msg.style.color = '#f08c79'; return; }
       msg.textContent = 'Recalculating…';
       for (let n = 0; n < 40; n++) {

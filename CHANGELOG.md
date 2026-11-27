@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.9.2
+- **Gear upgrades count mana properly.**
+  - Healers (Restoration Druid and Shaman, Holy and Discipline Priest, Holy Paladin) now value mana per 5s, Spirit and Intellect much more. A +healing piece no longer beats a Spirit/Intellect/mana piece just because it has more healing.
+  - New **Mana or healing** choice per character: *Healing first* (short fights), *Balanced* or *Mana first* (long fights, leveling, PvP).
+  - The **Change if you swap** column shows what you gain and, in red, what you lose from the item you wear now. In game, the tooltip says the same.
+  - Each spec table shows the weights it used.
+  - Your `stat_weights.json` gets the new healer values if you never edited it. Edited weights are left alone.
+
 ## 1.9.1
 - **Gear tab no longer stays empty without saying why.** Desk and the in-game tab now name the missing step: addon too old, characters not seen yet, no gear listings in the scan, or stats not saved yet (a /reload before chat says "gear stats read").
 - New `/myfa gear` command: what MyFA recorded (items worn, gear listings, stats read), whether it is still reading, and whether Desk's lists have arrived.
