@@ -29,7 +29,8 @@ import myfa_desk as desk  # noqa: E402
 import updater  # noqa: E402
 import guide as guide_mod  # noqa: E402
 import analysis
-import bbb  # noqa: E402
+import bbb
+import upgrades  # noqa: E402
 from analysis import History  # noqa: E402
 
 DEFAULT_PORT = 47800
@@ -282,6 +283,21 @@ class Desk:
         return errors
 
     # ---- flips added or removed from the dashboard --------------------------------------
+    def upgrade_specs(self, data):
+        ck = str(data.get("char") or "")
+        cls = str(data.get("class") or "").upper()
+        wts = upgrades.weights()
+        if cls not in wts:
+            return {"error": "Unknown class."}
+        main, off = data.get("main") or "", data.get("off") or ""
+        if main not in wts[cls] or (off and off not in wts[cls]):
+            return {"error": "Pick specs from the list for that class."}
+        upgrades.save_settings(ck, cls, main, off, bool(data.get("pvp")))
+        log(f"Gear upgrades for {ck.split('-')[0]}: {cls.title()} {main}{' / ' + off if off else ''}"
+            f"{' (PvP)' if data.get('pvp') else ''}.")
+        self.reprocess.set()
+        return {"ok": True}
+
     def bbb_import(self, data):
         text = data.get("text") or ""
         parsed = bbb.parse(text)
@@ -486,6 +502,8 @@ def make_handler(app: Desk):
                 return self._send(200, json.dumps(app.add_flip(data)))
             if route == "/api/forget":
                 return self._send(200, json.dumps(app.forget_flip(data)))
+            if route == "/api/upgrade-specs":
+                return self._send(200, json.dumps(app.upgrade_specs(data)))
             if route == "/api/bbb-import":
                 return self._send(200, json.dumps(app.bbb_import(data)))
             if route == "/api/bbb-clear":
@@ -1006,6 +1024,34 @@ CONTROL_HTML = r"""
       out.textContent = 'Copy blocked by the browser: the request is in the box below, press Ctrl+C, then clear the box.';
     }
   };
+  // gear upgrades: class, main and off spec per character
+  const specOpts = (() => { try { return JSON.parse(document.getElementById('spec-options').textContent); } catch (e) { return {}; } })();
+  document.querySelectorAll('form.specform').forEach(f => {
+    const cls = f.querySelector('.sp-class'), main = f.querySelector('.sp-main'), off = f.querySelector('.sp-off');
+    cls.onchange = () => {
+      const specs = specOpts[cls.value] || [];
+      main.innerHTML = specs.map(s => `<option>${s}</option>`).join('');
+      off.innerHTML = '<option value="">None</option>' + specs.map(s => `<option>${s}</option>`).join('');
+      if (specs[1]) off.value = specs[1];
+    };
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const msg = f.querySelector('.sp-msg');
+      msg.textContent = 'Saving…'; msg.style.color = '';
+      const before = (await (await fetch('/api/status', { cache: 'no-store' })).json()).report_ts;
+      const r = await post('/api/upgrade-specs', { char: f.dataset.char, class: cls.value, main: main.value, off: off.value,
+                                                  pvp: f.querySelector('[name=pvp]').checked });
+      if (!r.ok) { msg.textContent = r.error || 'Couldn\'t save.'; msg.style.color = '#f08c79'; return; }
+      msg.textContent = 'Recalculating…';
+      for (let n = 0; n < 40; n++) {
+        await new Promise(res => setTimeout(res, 750));
+        const st = await (await fetch('/api/status', { cache: 'no-store' })).json();
+        if (st.report_ts && st.report_ts !== before) break;
+      }
+      try { localStorage.setItem('myfa-tab', 'tab-gear'); } catch (e) {}
+      location.reload();
+    };
+  });
   const bForm = document.getElementById('bbb-form');
   if (bForm) bForm.onsubmit = async (ev) => {
     ev.preventDefault();

@@ -1,6 +1,6 @@
 -- MyFA Core: saved data, character snapshot (bags, gold, recipes, vendor prices), slash commands.
 local ADDON, ns = ...
-ns.VERSION = "1.8.1"
+ns.VERSION = "1.9.0"
 ns.HISTORY_DAYS = 14
 
 local DB_DEFAULTS = {
@@ -13,6 +13,7 @@ local DB_DEFAULTS = {
     alerted = {},   -- [itemID] = { p = price alerted at, t = time }
     imported = {},  -- [mid] = true: flips added in MyFA Desk that are already in the ledger
     forgotten = {}, -- [itemID] = time: "stop tracking" requests from MyFA Desk already applied
+    gear = {},      -- [itemID or itemID:suffix] = { n, q, lvl, loc, k, u, st = "STA=10;INT=7", cl = class restriction }
     posts = {},     -- { t, id, q, u, d = duration, a = "home"|"neutral", c, dep = deposit paid, dc = deposit calculated, r = outcome }
     sales = {},     -- { t, k = "sold"|"expired"|"cancelled", id, q, g = gross, cut, a, c, mq, cost, lost }
     mailSeen2 = {}, -- [kind|signature] = { sent times } so a mail is only counted once

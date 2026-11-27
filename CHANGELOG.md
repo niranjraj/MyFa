@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.9.0
+- **Gear upgrades from the Auction House**, for any class and the specs you choose.
+  - **What the addon records:** what each character wears (updated when you log in, change gear or level up). A Full scan also notes the cheapest listing of every armor piece and weapon, each random suffix ("of the Eagle") separately, and reads each item's stats in the background. Chat says when it's done.
+  - **New Gear upgrades tab in MyFA Desk:**
+    - per character, pick the class, main spec and off spec (all classic classes and specs, for example Druid Restoration, Balance, Feral (cat) or Feral (bear)), plus a PvP option that values Stamina more;
+    - one list per spec: the slot, the item, its price, how much better it scores than what you wear, upgrade per gold, what it replaces and what it adds.
+  - **Only gear you can use:** your level, your class's armor type (mail and plate from 40), weapon types, shields, relics and class-only items.
+  - **Fair comparisons:** rings and trinkets are compared with your weaker one, and two-handers with your main hand and off hand together.
+  - **Stat weights** are classic-style approximations. Edit them in `data/stat_weights.json` in the MyFA Desk folder.
+- **New Gear tab in game:** upgrades for the character you're on. The button at the bottom switches between main and off spec; Search finds the item in the Auction House.
+- The in-game panel is a little wider to fit six tabs.
+
 ## 1.8.1
 - **Check Booty Bay Broker deals** (Flips tab). Open their WoW Forever deals page for your realm and faction, press Ctrl+A then Ctrl+C, and paste it into Desk. You can paste more pages one after another. Desk runs your flip checks on every row, using their sales figures (sold a day and range, selling speed, supply surge) and their usual sale price:
   - is there a gap between the lowest price and the next listing after you buy;

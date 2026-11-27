@@ -58,6 +58,24 @@ Items with fewer than 10 listed (often recipes and patterns) are thin markets. T
 - **Add flips by hand:** press **+ Add flip** on the My flips tab in game (or `/myfa add`), drop the item in or shift-click it, then enter quantity and price each. In MyFA Desk, use the **Add a flip** form on My flips. It suggests item names, and the flip reaches the game on your next /reload.
 - **Stop tracking** a flip with **Remove** on its row in Desk, or `/myfa forget [item]` in game. Turn alerts off with `/myfa alerts off`.
 
+## Gear upgrades
+
+**To get your upgrades:**
+1. Log in on each character once, so the addon notes what it wears.
+2. Press **Full scan** at the Auction House. The addon reads the stats of every gear listing in the background, and chat says when it's done.
+3. Type `/reload`. Desk's **Gear upgrades** tab then lists the upgrades.
+
+**For each character** you pick the class, main spec and off spec, and tick **PvP** if Stamina should count for more. Then press **Save and recalculate**.
+- Each item gets a score from its stats and the spec's stat weights.
+- An upgrade scores higher than what you wear in that slot. Rings and trinkets are compared with your weaker one; a two-hander with your main hand and off hand together.
+- Only gear your class and level can use is listed.
+- On-use and proc effects aren't counted.
+- Sort by **Upgrade per gold** to find cheap big jumps.
+
+**Stat weights:** Desk writes them to `data/stat_weights.json` the first time. Change any number there; class and spec names must stay as they are.
+
+**In game:** the **Gear** tab shows the same lists for the character you're on. The button at the bottom switches between main and off spec.
+
 ## Booty Bay Broker deals
 
 [Booty Bay Broker](https://bootybaybroker.com/forever/deals) tracks WoW Forever prices hourly and estimates how many of each item sell a day. To check their deals with MyFA's flip rules:

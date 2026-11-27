@@ -161,7 +161,7 @@ local function trackSales(realm, sigs, now)
     for day in pairs(realm.obs) do if day < cutoff then realm.obs[day] = nil end end
 end
 
-local function finish(realmKey, byItem, auctions, others, sigs)
+local function finish(realmKey, byItem, auctions, others, sigs, gear)
     local realm = MyFA_DB.realms[realmKey] or { h = {} }
     MyFA_DB.realms[realmKey] = realm
     realm.h = realm.h or {}
@@ -190,6 +190,11 @@ local function finish(realmKey, byItem, auctions, others, sigs)
 
     realm.items = items
     realm.neutral = ns.AtNeutralAH() or nil
+    if gear then
+        realm.gear = {}
+        for key, e in pairs(gear) do realm.gear[key] = e[1] end
+        if ns.QueueGearStats then ns.QueueGearStats(gear) end
+    end
     local gapBefore = realm.prevT and (time() - realm.prevT) or nil
     if sigs then trackSales(realm, sigs, time()) end
     realm.lastScan = time()
@@ -221,9 +226,11 @@ local function read()
     end
     local myToken = token
     local realmKey = ns.MarketKey()  -- your faction's Auction House, or the neutral one
-    local byItem, others, sigs = {}, {}, {}
+    local byItem, others, sigs, gear = {}, {}, {}, {}
     local mine = ns.MyNames()
     local timeLeft = AH.GetReplicateItemTimeLeft
+    local itemLink = AH.GetReplicateItemLink
+    local isGear = {}
     local index, used = 0, 0
     scan.phase, scan.total, scan.done = "reading", total, 0
     refresh()
@@ -240,6 +247,14 @@ local function read()
                 list[#list + 1] = { unit, count }
                 -- cheapest listing that isn't yours, for the undercut check
                 if not (owner and mine[owner]) and (not others[itemID] or unit < others[itemID]) then others[itemID] = unit end
+                -- gear: cheapest listing per item and random suffix ("of the Eagle"), for the upgrade finder
+                local g = isGear[itemID]
+                if g == nil then g = ns.IsGearItem(itemID); isGear[itemID] = g end
+                if g and itemLink then
+                    local ok, link = pcall(itemLink, i)
+                    local key = ok and link and ns.GearKey(link)
+                    if key and (not gear[key] or unit < gear[key][1]) then gear[key] = { unit, link } end
+                end
                 -- this listing's identity and time-left band, to tell sold from expired next scan
                 local band = -1
                 if timeLeft then
@@ -260,7 +275,7 @@ local function read()
             refresh()
             C_Timer.After(0, step)
         else
-            finish(realmKey, byItem, used, others, sigs)
+            finish(realmKey, byItem, used, others, sigs, gear)
         end
     end
     step()

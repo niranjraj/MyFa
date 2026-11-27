@@ -9,6 +9,7 @@ from pathlib import Path
 
 import bbb
 import pnl
+import upgrades as upg
 
 DAY = 86400
 NEUTRAL_SUFFIX = "-NeutralAH"   # the addon stores neutral (goblin) Auction House scans under "<realm>-NeutralAH"
@@ -1108,6 +1109,11 @@ def analyse(sv, history: History, cfg, now=None):
     order_a = {"Price fell": 0, "Undercut": 1, "Cheap dump": 2, "No price": 3, "Lowest": 4}
     my_auctions.sort(key=lambda r: (order_a[r["status"]], -(r["u"] * r["qty"])))
 
+    # ---- gear upgrades for each character ---------------------------------------------------------------
+    gear_ups, gear_wts = upg.all_upgrades(db, realm, char_items, realm_key)
+    for ck, u in gear_ups.items():
+        u["name"] = ck.split("-")[0]
+
     # ---- neutral Auction House: a separate market both factions share ---------------------------------
     nmodel = sales_model(history, neutral_key, today)
     neutral = neutral_trades(cfg, now, today, history, neutral_key, neutral_realm, scan, typical_low, meta, name, quality,
@@ -1210,6 +1216,7 @@ def analyse(sv, history: History, cfg, now=None):
         "profiles": profiles, "next_moves": next_moves,
         "mail_seen": any(c.get("mailT") for c in chars),
         "neutral": neutral, "profit": profit, "my_auctions": my_auctions,
+        "upgrades": gear_ups, "spec_options": {c: list(w) for c, w in gear_wts.items()},
         "bbb": bbb_info, "flip_skips": skips, "sales_watch": {"hours": round(smodel["hours"], 1), "days": smodel["days"],
                                              "items": len(smodel["items"])},
         "risk": {"p0": riskm.p0, "p0_basis": riskm.p0_basis, "dep_rate": riskm.dep_rate, "dep_learned": riskm.dep_learned,
@@ -1459,6 +1466,11 @@ def targets_table(result):
         "imports": [{k: m[k] for k in ("mid", "id", "q", "u", "t")} for m in result["manual"].get("adds", [])
                     if m.get("realm", result["realm"]) == result["realm"]],
         "forgets": [{"id": int(k), "t": v} for k, v in (result["manual"].get("forgets") or {}).items()],
+        "upgrades": {ck: {"main": u["main"], "off": u["off"], "lists": {
+                        sp["spec"]: [{"id": r["id"], "key": r["key"], "name": r["name"], "slot": r["slot"], "price": r["price"],
+                                      "pct": r["pct"], "gain": r["gain"], "replaces": r["replaces"], "stats": r["stats"]}
+                                     for r in sp["items"][:25]] for sp in u["specs"]}}
+                     for ck, u in (result.get("upgrades") or {}).items()},
         "risk": result["risk"]["units"],
         "rates": result["risk"].get("rates") or {},
         "neutral": neutral_targets(result),

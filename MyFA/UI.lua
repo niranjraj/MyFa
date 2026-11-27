@@ -2,7 +2,7 @@
 local ADDON, ns = ...
 
 local ROWS, ROW_H = 9, 40
-local PANEL_W, PANEL_H = 430, 566
+local PANEL_W, PANEL_H = 460, 566
 local GOLD = { 0.85, 0.71, 0.35 }
 local GREEN = "|cff6fd08a"
 local RED = "|cffe8796b"
@@ -34,6 +34,7 @@ local TAB_HINT = {
     crafts = "Recipes you know that make a profit. Right: profit per craft. Open a profession window to add recipes.",
     mine = "Things you bought, tracked until you sell them. Right: profit if you sold now. You get an alert when it's time.",
     listed = "Your auctions here. UNDERCUT means someone lists it cheaper. Check prices looks up live prices.",
+    gear = "Gear on the Auction House that beats what you wear. Pick class and specs in MyFA Desk's Gear upgrades tab.",
 }
 local currentTab, offset = "buys", 0
 local pending -- { id, qty, max, state = "starting"|"confirm"|"buying", unit, total }
@@ -48,6 +49,7 @@ end
 local function list()
     if currentTab == "mine" then return ns.Positions() end
     if currentTab == "listed" then return ns.MyAuctions() end
+    if currentTab == "gear" then return ns.GearList() end
     local t = targets()
     if t and ns.AtNeutralAH() and currentTab ~= "crafts" then
         return (t.neutral and t.neutral[currentTab]) or {}
@@ -227,6 +229,13 @@ local function rowTooltip(self)
     elseif currentTab == "crafts" then
         steps = { "Mats cost " .. ns.Money(e.cost) .. ", the result sells for " .. ns.Money(e.value) .. " after the cut.",
                   "Craft it, then post it at today's lowest price." }
+    elseif currentTab == "gear" then
+        local spec = ns.GearSpecName()
+        steps = { string.format("%s upgrade for %s%s.", e.slot or "Gear", spec or "your spec",
+                                e.pct and string.format(": scores %d%% higher", e.pct) or ": fills an empty slot"),
+                  e.replaces and ("Replaces: " .. e.replaces) or "Nothing worn there now.",
+                  "Adds: " .. (e.stats or "?"),
+                  "Cheapest listing: " .. ns.Money(e.price or 0) .. ". Press Search, then buy it in the Auction House window." }
     elseif currentTab == "listed" then
         steps = ns.AuctionAdvice(e)
     elseif currentTab == "mine" then
@@ -347,6 +356,11 @@ local function updateRow(r, e)
         elseif ahOpen() then
             r.buy:SetText("Post"); r.buy:Enable(); r.buy:Show()
         end
+    elseif currentTab == "gear" then
+        local up = e.pct and string.format("%s+%d%%|r", GREEN, e.pct) or (GREEN .. "empty slot|r")
+        r.detail:SetText(string.format("%s%s|r  %s  %s", GOLDC, e.slot or "?", up,
+            MUTED .. (e.replaces and ("over " .. e.replaces) or "") .. "|r"))
+        r.profit:SetText(ns.Money(e.price or 0))
     elseif currentTab == "listed" then
         -- name line, right: what's going on; detail line: the price to act on and the timing
         local status, what
@@ -492,14 +506,21 @@ function ns.RefreshPanel()
     panel.hint:SetText(hint)
     panel.addFlip:SetShown(currentTab == "mine")
     panel.check:SetShown(currentTab == "listed")
+    panel.spec:SetShown(currentTab == "gear")
+    if currentTab == "gear" then
+        local name, which = ns.GearSpecName()
+        panel.spec:SetText((which == "off" and "Off: " or "Main: ") .. (name or "?"))
+    end
     local busy, cur, left = ns.IsCheckingPrices()
     panel.check:SetText(busy and "Stop" or "Check prices")
     panel.check:SetEnabled(busy or ahOpen() and true or false)
-    panel.footer:SetWidth((currentTab == "mine" or currentTab == "listed") and (PANEL_W - 150) or (PANEL_W - 28))
+    panel.footer:SetWidth((currentTab == "mine" or currentTab == "listed") and (PANEL_W - 150)
+        or currentTab == "gear" and (PANEL_W - 190) or (PANEL_W - 28))
     for key, tab in pairs(tabs) do
         local n
         if key == "mine" then n = #ns.Positions()
         elseif key == "listed" then n = #ns.MyAuctions()
+        elseif key == "gear" then n = #ns.GearList()
         elseif ns.AtNeutralAH() and key ~= "crafts" then n = #(((targets() or {}).neutral or {})[key] or {})
         else n = #((targets() or {})[key] or {}) end
         tab:SetText(tab.label .. " " .. n)
@@ -507,7 +528,11 @@ function ns.RefreshPanel()
     end
     if #data == 0 then
         local t = targets()
-        if currentTab == "listed" then
+        if currentTab == "gear" then
+            panel.empty:SetText("No gear upgrades yet.\n\nPress Full scan: MyFA reads the stats of every gear listing (chat says "
+                .. "when it's done). Then /reload so MyFA Desk can score them for your specs, and /reload again once Desk has "
+                .. "written the results.")
+        elseif currentTab == "listed" then
             panel.empty:SetText("No auctions recorded at this Auction House.\n\nOpen the Auction House's Auctions tab once so MyFA can see "
                 .. "what you have listed. Then this tab shows which ones are undercut, and Check prices looks up live prices.")
         elseif currentTab == "mine" then
@@ -588,8 +613,8 @@ local function build()
     panel.scan:SetPoint("TOPRIGHT", -30, -14)
     panel.scan:SetScript("OnClick", function() ns.StartScan() end)
 
-    local tabDefs = { { "buys", "Buy", 66 }, { "sells", "Sell", 66 }, { "crafts", "Craft", 72 }, { "mine", "My flips", 94 },
-                      { "listed", "Listed", 82 } }
+    local tabDefs = { { "buys", "Buy", 58 }, { "sells", "Sell", 58 }, { "crafts", "Craft", 62 }, { "mine", "My flips", 88 },
+                      { "listed", "Listed", 74 }, { "gear", "Gear", 62 } }
     local prev
     for _, def in ipairs(tabDefs) do
         local b = makeButton(panel, def[2], def[3])
@@ -647,6 +672,9 @@ local function build()
         GameTooltip:Show()
     end)
     panel.addFlip:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    panel.spec = makeButton(panel, "Main spec", 150)
+    panel.spec:SetPoint("BOTTOMRIGHT", -12, 8)
+    panel.spec:SetScript("OnClick", function() ns.ToggleGearSpec() end)
     panel.check = makeButton(panel, "Check prices", 110)
     panel.check:SetPoint("BOTTOMRIGHT", -12, 8)
     panel.check:SetScript("OnClick", function() ns.CheckPrices() end)

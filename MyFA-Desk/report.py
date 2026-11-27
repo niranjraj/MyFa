@@ -1,5 +1,6 @@
 """Self-contained HTML dashboard for MyFA Desk results."""
 import html
+import json
 import time
 
 import guide as guide_mod
@@ -400,6 +401,59 @@ def _dur(sec):
         return f"{h}h {m}m" if m else f"{h}h"
     d, h = sec // 86400, (sec % 86400) // 3600
     return f"{d}d {h}h" if h else f"{d}d"
+
+
+def gear_panel(result, it):
+    ups = result.get("upgrades") or {}
+    opts = result.get("spec_options") or {}
+    if not ups:
+        return ('<div class="empty"><p>No gear data yet. Update the addon, log in on each character (MyFA notes what it wears), '
+                'then press <b>Full scan</b> at the Auction House. MyFA reads the stats of every gear listing in the background '
+                '(chat says when it\'s done); then type <code>/reload</code>.</p></div>')
+    parts = [f'<script type="application/json" id="spec-options">{json.dumps(opts)}</script>']
+    for ck, u in sorted(ups.items(), key=lambda kv: kv[0]):
+        cls_opts = "".join(f'<option value="{c}"{" selected" if c == u["class"] else ""}>{c.title()}</option>' for c in opts)
+        spec_list = opts.get(u["class"], [])
+        main_opts = "".join(f'<option{" selected" if s_ == u["main"] else ""}>{esc(s_)}</option>' for s_ in spec_list)
+        off_opts = '<option value="">None</option>' + "".join(
+            f'<option{" selected" if s_ == u["off"] else ""}>{esc(s_)}</option>' for s_ in spec_list)
+        form = (f'<form class="addflip specform live-only" data-char="{esc(ck)}" autocomplete="off">'
+                f'<label>Class<select name="class" class="sp-class">{cls_opts}</select></label>'
+                f'<label>Main spec<select name="main" class="sp-main">{main_opts}</select></label>'
+                f'<label>Off spec<select name="off" class="sp-off">{off_opts}</select></label>'
+                f'<label class="check"><input type="checkbox" name="pvp"{" checked" if u["pvp"] else ""}> PvP (values Stamina more)</label>'
+                '<button type="submit" class="cbtn primary">Save and recalculate</button>'
+                '<span class="hint sp-msg" role="status"></span></form>')
+        tables = []
+        for sp in u["specs"]:
+            rows = [[
+                td(esc(r["slot"]), r["slot"]),
+                td(it(r), r["name"]),
+                td(money(r["price"]), r["price"], "num"),
+                td((f'+{r["pct"]}%' if r["pct"] is not None else "fills an empty slot"), r["pct"] if r["pct"] is not None else 9999, "num pos"),
+                td(f'{r["per_gold"]:.1f}', r["per_gold"], "num"),
+                td(esc(r["replaces"]) if r["replaces"] else '<span class="na">nothing</span>', r["replaces"] or ""),
+                td(esc(r["stats"]), r["stats"]),
+                td(str(r["lvl"] or "-"), r["lvl"] or 0, "num"),
+            ] for r in sp["items"]]
+            more = f' Showing the best {len(sp["items"])} of {sp["count"]}.' if sp["count"] > len(sp["items"]) else ""
+            tables.append(
+                f'<div class="spectable"><h3>{esc(sp["spec"])}{" (main)" if sp["spec"] == u["main"] else " (off spec)"}</h3>'
+                + table(f'up-{abs(hash(ck + sp["spec"])) % 10**8}',
+                        [("Slot", "s", ""), ("Item", "s", ""), ("Price", "n", "num"), ("Upgrade", "n", "num"),
+                         ("Upgrade per gold", "n", "num"), ("Replaces", "s", ""), ("What it adds", "s", ""), ("Level", "n", "num")],
+                        rows, f"No upgrades for {esc(sp['spec'])} on the Auction House right now.")
+                + (f'<p class="fine">{more.strip()}</p>' if more else "") + '</div>')
+        parts.append(
+            f'<section class="block"><div class="blockhead"><h2>{esc(u["name"])}</h2>'
+            f'<p class="lede">Level {u["level"]} {esc(u["class"].title())}: {esc(u["main"])}'
+            f'{" / " + esc(u["off"]) if u["off"] else ""}{", PvP" if u["pvp"] else ""}. '
+            f'{u["worn"]} items worn are compared.</p></div>{form}{"".join(tables)}</section>')
+    parts.append('<p class="fine">Each item gets a score from its stats and your spec\'s stat weights; <em>Upgrade</em> is how much '
+                 'higher it scores than what you wear in that slot (rings and trinkets: your weaker one; a two-hander: your '
+                 'main and off hand together). Only items your class and level can use. On-use and proc effects aren\'t '
+                 'counted. To change the weights, edit <code>data/stat_weights.json</code> in the MyFA Desk folder.</p>')
+    return "".join(parts)
 
 
 def profit_panel(result, it, sort_or):
@@ -880,6 +934,9 @@ def build(result, advice=None, config_path=""):
         f"Change the {roi_pct}% in game with <code>/myfa roi 20</code>."))
     pr = result.get("profit") or {}
     sales_n = sum(1 for r in pr.get("trades", []) if r["kind"] == "sold")
+    up_n = sum(len(sp["items"]) for u in (result.get("upgrades") or {}).values() for sp in u["specs"])
+    panels.append(("gear", "Gear upgrades", up_n or None, gear_panel(result, it),
+                   "Gear on the Auction House that beats what each character wears, for the class and specs you pick."))
     panels.append(("profit", "Profit", sales_n or None, profit_panel(result, it, sort_or),
                    "What your sales really made, read from your Auction House mail. Purchases close by themselves when they sell."))
     nt = result.get("neutral") or {}
@@ -948,7 +1005,7 @@ def build(result, advice=None, config_path=""):
     panels_html = "".join(
         f'<section role="tabpanel" id="panel-{pid}" aria-labelledby="tab-{pid}" {"" if n == 0 else "hidden"}>'
         f'<div class="panelhead"><p class="desc">{desc}</p>'
-        f'{"" if pid in ("claude", "analysis", "guide", "profit") else f"<label class=filter><span class=sr>Filter {esc(label)}</span><input type=search placeholder=Filter… data-filter=panel-{pid}></label>"}'
+        f'{"" if pid in ("claude", "analysis", "guide", "profit", "gear") else f"<label class=filter><span class=sr>Filter {esc(label)}</span><input type=search placeholder=Filter… data-filter=panel-{pid}></label>"}'
         f'</div>{body}</section>'
         for n, (pid, label, count, body, desc) in enumerate(panels))
 
@@ -1272,6 +1329,12 @@ td.barcell {{ vertical-align: middle; }}
 .neutralstat {{ margin: 0 0 22px; }}
 .block.auctions {{ margin-bottom: 28px; }}
 .watchnote {{ margin: 0 0 10px; max-width: 980px; }}
+.specform select {{ background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 9px; font: 13px var(--sans); min-width: 150px; }}
+.specform select:focus {{ border-color: var(--gold); outline: none; }}
+.specform label.check {{ display: flex; flex-direction: row; align-items: center; gap: 8px; color: var(--text); }}
+.spectable {{ margin-top: 18px; }}
+.spectable h3 {{ font-size: 14px; margin: 0 0 8px; color: var(--text); }}
 .bbbform label.wide {{ flex: 1 1 420px; }}
 .bbbform textarea {{ width: 100%; min-height: 64px; resize: vertical; background: var(--bg); color: var(--text);
   border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: 13px/1.4 var(--sans); }}
